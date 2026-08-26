@@ -1,0 +1,58 @@
+import type { Notification } from "../types";
+
+export const mockNotifications: Notification[] = [
+  {
+    id: "notif-001",
+    type: "order",
+    title: "طلب جديد",
+    message: "طلب #10024 — أحمد محمود — في انتظار التأكيد",
+    read: false,
+    createdAt: "2025-08-19T12:30:00Z",
+    link: "/dashboard/orders",
+  },
+  {
+    id: "notif-002",
+    type: "inventory",
+    title: "نفد المخزون",
+    message: "بنطلون كاجوال رمادي [BNT-0018] — نفد المخزون",
+    read: false,
+    createdAt: "2025-08-19T09:00:00Z",
+    link: "/dashboard/inventory",
+  },
+  {
+    id: "notif-003",
+    type: "inventory",
+    title: "نفد المخزون",
+    message: "تيشيرت بيسيك رمادي [TSH-0009] — نفد المخزون",
+    read: false,
+    createdAt: "2025-08-18T16:00:00Z",
+    link: "/dashboard/inventory",
+  },
+  {
+    id: "notif-004",
+    type: "inventory",
+    title: "مخزون منخفض",
+    message: "بنطلون جينز سليم أسود [BNT-0019] — متبقي 8 قطع (الحد: 20)",
+    read: false,
+    createdAt: "2025-08-17T11:00:00Z",
+    link: "/dashboard/inventory",
+  },
+  {
+    id: "notif-005",
+    type: "inventory",
+    title: "مخزون منخفض",
+    message: "تيشيرت بولو أزرق [TSH-0010] — متبقي 12 قطعة (الحد: 30)",
+    read: true,
+    createdAt: "2025-08-16T09:00:00Z",
+    link: "/dashboard/inventory",
+  },
+  {
+    id: "notif-006",
+    type: "shipment",
+    title: "تم التوصيل",
+    message: "شحنة TRK-000023 — وصلت للعميل بنجاح",
+    read: true,
+    createdAt: "2025-08-19T10:00:00Z",
+    link: "/dashboard/shipments",
+  },
+];
