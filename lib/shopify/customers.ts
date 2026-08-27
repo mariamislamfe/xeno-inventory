@@ -1,7 +1,7 @@
 import { shopifyFetch } from "./client";
 
 // ── Shopify raw types ───────────────────────────────────────────────────
-interface ShopifyCustomer {
+export interface ShopifyCustomerRaw {
   id: number;
   first_name: string;
   last_name: string;
@@ -37,7 +37,7 @@ export interface XenoCustomer {
   createdAt: string;
 }
 
-export function normalizeCustomer(c: ShopifyCustomer): XenoCustomer {
+export function normalizeCustomer(c: ShopifyCustomerRaw): XenoCustomer {
   return {
     id:          String(c.id),
     shopifyId:   c.id,
@@ -57,7 +57,7 @@ export function normalizeCustomer(c: ShopifyCustomer): XenoCustomer {
 // ── API functions ───────────────────────────────────────────────────────
 
 export async function getShopifyCustomers(limit = 100): Promise<XenoCustomer[]> {
-  const data = await shopifyFetch<{ customers: ShopifyCustomer[] }>(
+  const data = await shopifyFetch<{ customers: ShopifyCustomerRaw[] }>(
     `/customers.json?limit=${limit}`
   );
   return data.customers.map(normalizeCustomer);
@@ -65,7 +65,7 @@ export async function getShopifyCustomers(limit = 100): Promise<XenoCustomer[]> 
 
 export async function getShopifyCustomer(id: string): Promise<XenoCustomer | null> {
   try {
-    const data = await shopifyFetch<{ customer: ShopifyCustomer }>(
+    const data = await shopifyFetch<{ customer: ShopifyCustomerRaw }>(
       `/customers/${id}.json`
     );
     return normalizeCustomer(data.customer);

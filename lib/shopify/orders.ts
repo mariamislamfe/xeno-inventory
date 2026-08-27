@@ -1,7 +1,7 @@
 import { shopifyFetch, shopifyPost } from "./client";
 
 // ── Shopify raw types ───────────────────────────────────────────────────
-interface ShopifyAddress {
+export interface ShopifyAddress {
   first_name: string;
   last_name: string;
   address1: string;
@@ -31,7 +31,7 @@ interface ShopifyFulfillment {
   created_at: string;
 }
 
-interface ShopifyOrder {
+export interface ShopifyOrderRaw {
   id: number;
   order_number: number;
   name: string; // "#1001"
@@ -82,7 +82,7 @@ export interface XenoOrder {
   createdAt: string;
 }
 
-function mapStatus(o: ShopifyOrder): XenoOrder["status"] {
+function mapStatus(o: ShopifyOrderRaw): XenoOrder["status"] {
   if (o.cancelled_at) return "cancelled";
   if (o.fulfillment_status === "fulfilled") return "delivered";
   if (o.fulfillment_status === "partial") return "processing";
@@ -100,7 +100,7 @@ function mapPayment(s: string): XenoOrder["paymentStatus"] {
   return m[s] ?? "unpaid";
 }
 
-export function normalizeOrder(o: ShopifyOrder): XenoOrder {
+export function normalizeOrder(o: ShopifyOrderRaw): XenoOrder {
   const addr   = o.shipping_address ?? o.billing_address;
   const firstName = addr?.first_name ?? "";
   const lastName  = addr?.last_name  ?? "";
@@ -139,7 +139,7 @@ export function normalizeOrder(o: ShopifyOrder): XenoOrder {
 // ── API functions ───────────────────────────────────────────────────────
 
 export async function getShopifyOrders(limit = 50): Promise<XenoOrder[]> {
-  const data = await shopifyFetch<{ orders: ShopifyOrder[] }>(
+  const data = await shopifyFetch<{ orders: ShopifyOrderRaw[] }>(
     `/orders.json?limit=${limit}&status=any`
   );
   return data.orders.map(normalizeOrder);
@@ -147,7 +147,7 @@ export async function getShopifyOrders(limit = 50): Promise<XenoOrder[]> {
 
 export async function getShopifyOrder(id: string): Promise<XenoOrder | null> {
   try {
-    const data = await shopifyFetch<{ order: ShopifyOrder }>(`/orders/${id}.json`);
+    const data = await shopifyFetch<{ order: ShopifyOrderRaw }>(`/orders/${id}.json`);
     return normalizeOrder(data.order);
   } catch {
     return null;
