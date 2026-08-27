@@ -89,6 +89,8 @@ async function handleTopic(topic: string, payload: unknown) {
 
 async function onOrderCreate(raw: ShopifyOrderRaw) {
   const order = normalizeOrder(raw);
+
+  // Log to activity
   await supabaseAdmin.from("activity_log").insert({
     type:      "order",
     action:    "create",
@@ -103,6 +105,46 @@ async function onOrderCreate(raw: ShopifyOrderRaw) {
       city:           order.city,
     },
   });
+
+  // Send WhatsApp confirmation if service is configured
+  if (order.customerPhone) {
+    await sendWhatsApp(order.customerPhone, order.customerName, order.orderNumber, order.total);
+  }
+}
+
+async function sendWhatsApp(phone: string, name: string, orderNumber: string, total: number) {
+  const waUrl    = process.env.WA_SERVICE_URL;
+  const waSecret = process.env.WA_SECRET;
+  if (!waUrl || !waSecret) return; // silently skip if not configured
+
+  const message =
+    `مرحباً ${name} 👋\n` +
+    `✅ تم استلام طلبك بنجاح!\n` +
+    `📦 رقم الطلب: #${orderNumber}\n` +
+    `💰 الإجمالي: ${total.toLocaleString("en-US")} ج.م\n\n` +
+    `سيتم التواصل معك قريباً لتأكيد موعد التسليم.\n` +
+    `شكراً لثقتك في XENO 🛍️`;
+
+  try {
+    const res = await fetch(`${waUrl}/send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-wa-secret": waSecret },
+      body: JSON.stringify({ phone, message }),
+    });
+    const data = await res.json();
+
+    // Log WhatsApp message to Supabase
+    await supabaseAdmin.from("whatsapp_messages").insert({
+      shopify_order_id: 0, // will be filled properly
+      order_number:     orderNumber,
+      phone,
+      customer_name:    name,
+      template:         "order_confirmation",
+      status:           data.ok ? "sent" : "failed",
+    });
+  } catch (err) {
+    console.error("[webhook] WhatsApp send failed:", err);
+  }
 }
 
 async function onOrderUpdated(raw: ShopifyOrderRaw) {
