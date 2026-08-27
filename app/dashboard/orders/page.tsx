@@ -1,33 +1,48 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
-import { Download, RefreshCw, Eye, Printer, Truck } from "lucide-react";
+import { RefreshCw, Eye, Printer, Truck, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { SearchInput } from "@/components/ui/Input";
 import { Pagination } from "@/components/ui/Pagination";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { OrderStatusBadge, PaymentStatusBadge } from "@/components/orders/OrderStatusBadge";
-import { mockOrders } from "@/lib/mock/orders";
-import type { Order } from "@/lib/types";
+import { useToast } from "@/components/ui/Toast";
+import { Badge } from "@/components/ui/Badge";
+import type { XenoOrder } from "@/lib/shopify/orders";
+
+// Map XenoOrder status → display
+const STATUS_DISPLAY: Record<string, { label: string; variant: "success" | "warning" | "danger" | "info" | "neutral" }> = {
+  pending:    { label: "جديد",    variant: "warning" },
+  processing: { label: "معالجة", variant: "info"    },
+  delivered:  { label: "مكتمل",  variant: "success" },
+  cancelled:  { label: "ملغي",   variant: "danger"  },
+  returned:   { label: "مرتجع",  variant: "neutral" },
+};
+
+const PAYMENT_DISPLAY: Record<string, { label: string; variant: "success" | "danger" | "warning" | "neutral" }> = {
+  paid:     { label: "مدفوع",    variant: "success" },
+  unpaid:   { label: "غير مدفوع", variant: "danger"  },
+  partial:  { label: "جزئي",     variant: "warning" },
+  refunded: { label: "مسترد",   variant: "neutral" },
+};
 
 // ── Filter tab definition ──────────────────────────────────────────────
-type TabKey = "all" | "delivered" | "returned" | "cancelled" | "printed" | "unprinted";
+type TabKey = "all" | "delivered" | "pending" | "cancelled" | "processing";
 
 interface Tab {
   key: TabKey;
   label: string;
-  filter: (o: Order) => boolean;
+  filter: (o: XenoOrder) => boolean;
   color?: string;
 }
 
 const TABS: Tab[] = [
-  { key: "all",       label: "الكل",         filter: () => true },
-  { key: "delivered", label: "مكتملة",       filter: (o) => o.status === "delivered",                          color: "#22c55e" },
-  { key: "returned",  label: "مرتجعة",       filter: (o) => o.status === "returned",                           color: "#f59e0b" },
-  { key: "cancelled", label: "ملغية",        filter: (o) => o.status === "cancelled",                          color: "#ef4444" },
-  { key: "printed",   label: "مطبوعة",       filter: (o) => o.printLabelReady === true,                        color: "#3b82f6" },
-  { key: "unprinted", label: "غير مطبوعة",   filter: (o) => !o.printLabelReady && o.status !== "delivered" && o.status !== "cancelled", color: "#8b5cf6" },
+  { key: "all",        label: "الكل",      filter: () => true },
+  { key: "pending",    label: "جديدة",     filter: (o) => o.status === "pending",    color: "#f59e0b" },
+  { key: "processing", label: "معالجة",    filter: (o) => o.status === "processing", color: "#3b82f6" },
+  { key: "delivered",  label: "مكتملة",    filter: (o) => o.status === "delivered",  color: "#22c55e" },
+  { key: "cancelled",  label: "ملغية",     filter: (o) => o.status === "cancelled",  color: "#ef4444" },
 ];
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -59,18 +74,52 @@ function WaStatus({ status }: { status?: string }) {
 const PAGE_SIZE = 15;
 
 export default function OrdersPage() {
+  const [orders,    setOrders]    = useState<XenoOrder[]>([]);
+  const [loading,   setLoading]   = useState(true);
+  const [syncing,   setSyncing]   = useState(false);
   const [activeTab, setActiveTab] = useState<TabKey>("all");
-  const [search, setSearch]       = useState("");
-  const [page, setPage]           = useState(1);
+  const [search,    setSearch]    = useState("");
+  const [page,      setPage]      = useState(1);
+  const { success, error } = useToast();
 
-  // Count per tab (from full dataset — Future: Shopify webhook counts)
+  async function loadOrders() {
+    setLoading(true);
+    try {
+      const res  = await fetch("/api/shopify/orders");
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setOrders(data.orders);
+    } catch {
+      error("خطأ", "تعذر تحميل الطلبات من Shopify");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function syncOrders() {
+    setSyncing(true);
+    try {
+      const res  = await fetch("/api/shopify/orders", { cache: "no-store" });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setOrders(data.orders);
+      success("تمت المزامنة", `${data.count} طلب من Shopify`);
+    } catch {
+      error("خطأ", "فشل تحديث الطلبات");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  useEffect(() => { loadOrders(); }, []);
+
   const counts = useMemo(() =>
-    Object.fromEntries(TABS.map((t) => [t.key, mockOrders.filter(t.filter).length])),
-  []);
+    Object.fromEntries(TABS.map((t) => [t.key, orders.filter(t.filter).length])),
+  [orders]);
 
   const filtered = useMemo(() => {
     const tab = TABS.find((t) => t.key === activeTab)!;
-    let data = mockOrders.filter(tab.filter);
+    let data = orders.filter(tab.filter);
     if (search) {
       const q = search.toLowerCase();
       data = data.filter(
@@ -78,11 +127,11 @@ export default function OrdersPage() {
           o.orderNumber.toLowerCase().includes(q) ||
           o.customerName.toLowerCase().includes(q) ||
           o.customerPhone.includes(q) ||
-          (o.autoTrackingNumber ?? "").toLowerCase().includes(q)
+          (o.trackingNumber ?? "").toLowerCase().includes(q)
       );
     }
     return data;
-  }, [activeTab, search]);
+  }, [activeTab, search, orders]);
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -98,11 +147,16 @@ export default function OrdersPage() {
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-page-title">الطلبات</h1>
-          <p className="text-small mt-0.5">إجمالي {mockOrders.length} طلب</p>
+          <p className="text-small mt-0.5">{loading ? "جارٍ التحميل..." : `إجمالي ${orders.length} طلب من Shopify`}</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" icon={<Download size={14} />} className="hidden sm:inline-flex">تصدير</Button>
-          <Button variant="secondary" size="sm" icon={<RefreshCw size={14} />} className="hidden sm:inline-flex">تحديث</Button>
+          <Button
+            variant="secondary" size="sm"
+            icon={syncing ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={14} />}
+            onClick={syncOrders} disabled={syncing}
+          >
+            {syncing ? "جارٍ المزامنة..." : "مزامنة"}
+          </Button>
         </div>
       </div>
 
@@ -153,7 +207,12 @@ export default function OrdersPage() {
 
       {/* Table */}
       <div className="card">
-        {paginated.length === 0 ? (
+        {loading ? (
+          <div className="flex items-center justify-center gap-3 p-16">
+            <Loader2 size={22} className="animate-spin text-[var(--primary)]" />
+            <p className="text-sm text-[var(--text-muted)]">جارٍ تحميل الطلبات من Shopify...</p>
+          </div>
+        ) : paginated.length === 0 ? (
           <EmptyState title="لا توجد طلبات" description="لا توجد طلبات في هذه الفئة" />
         ) : (
           <>
@@ -209,18 +268,18 @@ export default function OrdersPage() {
                         </span>
                       </td>
                       <td>
-                        <OrderStatusBadge status={order.status} size="sm" />
+                        {(() => { const s = STATUS_DISPLAY[order.status] ?? { label: order.status, variant: "neutral" as const }; return <Badge variant={s.variant} size="sm">{s.label}</Badge>; })()}
                       </td>
                       <td>
-                        <PaymentStatusBadge status={order.paymentStatus} size="sm" />
+                        {(() => { const s = PAYMENT_DISPLAY[order.paymentStatus] ?? { label: order.paymentStatus, variant: "neutral" as const }; return <Badge variant={s.variant} size="sm">{s.label}</Badge>; })()}
                       </td>
                       <td className="text-center">
-                        <WaStatus status={order.whatsappStatus} />
+                        <WaStatus status={undefined} />
                       </td>
                       <td>
-                        {order.autoTrackingNumber ? (
+                        {order.trackingNumber ? (
                           <span className="text-[11px] font-mono text-[var(--success)]" dir="ltr">
-                            {order.autoTrackingNumber}
+                            {order.trackingNumber}
                           </span>
                         ) : (
                           <span className="text-[11px] text-[var(--text-muted)]">—</span>
@@ -240,7 +299,7 @@ export default function OrdersPage() {
                           >
                             <Eye size={14} />
                           </Link>
-                          {order.printLabelReady ? (
+                          {order.trackingNumber ? (
                             <button
                               className="p-1.5 rounded-[var(--radius-sm)] text-[var(--success)] hover:bg-[var(--success-light)] transition-colors"
                               title="طباعة البوليصة"
