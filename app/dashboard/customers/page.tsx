@@ -1,11 +1,9 @@
 "use client";
 
-import React, { useState, useMemo, useEffect } from "react";
-import Link from "next/link";
-import { Eye, Users, RefreshCw, Loader2 } from "lucide-react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
+import { Eye, Users, RefreshCw, Loader2, Search, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/Button";
-import { SearchInput, Select } from "@/components/ui/Input";
-import { Pagination } from "@/components/ui/Pagination";
+import { Select } from "@/components/ui/Input";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Badge } from "@/components/ui/Badge";
 import { useToast } from "@/components/ui/Toast";
@@ -23,83 +21,92 @@ function formatDate(iso: string): string {
   });
 }
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 50;
 
 export default function CustomersPage() {
   const [customers,    setCustomers]    = useState<XenoCustomer[]>([]);
   const [loading,      setLoading]      = useState(true);
-  const [syncing,      setSyncing]      = useState(false);
+  const [loadingMore,  setLoadingMore]  = useState(false);
+  const [hasMore,      setHasMore]      = useState(false);
+  const [nextPageInfo, setNextPageInfo] = useState<string | null>(null);
+  const [totalCount,   setTotalCount]   = useState<number | null>(null);
   const [search,       setSearch]       = useState("");
+  const [searchInput,  setSearchInput]  = useState("");
   const [statusFilter, setStatusFilter] = useState<"active" | "inactive" | "">("");
-  const [page,         setPage]         = useState(1);
   const { success, error } = useToast();
+  const searchTimer = useRef<ReturnType<typeof setTimeout>>(null);
 
-  async function loadCustomers() {
-    setLoading(true);
+  async function loadCustomers(q: string, cursor: string | null = null) {
+    cursor ? setLoadingMore(true) : setLoading(true);
     try {
-      const res  = await fetch("/api/shopify/customers");
+      const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
+      if (cursor) params.set("page_info", cursor);
+      else if (q) params.set("query", q);
+
+      const res  = await fetch(`/api/shopify/customers?${params}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      setCustomers(data.customers);
+
+      setCustomers((prev) => cursor ? [...prev, ...data.customers] : data.customers);
+      setHasMore(data.has_more);
+      setNextPageInfo(data.next_page_info ?? null);
+      if (!cursor) setTotalCount(null);
     } catch {
       error("خطأ", "تعذر تحميل العملاء من Shopify");
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   }
 
-  async function syncCustomers() {
-    setSyncing(true);
+  async function fetchTotal() {
     try {
-      const res  = await fetch("/api/shopify/customers", { cache: "no-store" });
+      const res  = await fetch("/api/shopify/customers/count");
       const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      setCustomers(data.customers);
-      success("تمت المزامنة", `${data.count} عميل من Shopify`);
-    } catch {
-      error("خطأ", "فشل تحديث العملاء");
-    } finally {
-      setSyncing(false);
-    }
+      setTotalCount(data.count ?? null);
+    } catch {}
   }
 
-  useEffect(() => { loadCustomers(); }, []);
+  useEffect(() => {
+    setCustomers([]);
+    setNextPageInfo(null);
+    loadCustomers(search);
+    fetchTotal();
+  }, [search]);
+
+  function handleSearchChange(val: string) {
+    setSearchInput(val);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => setSearch(val), 500);
+  }
+
+  // client-side status filter (doesn't need new API call)
+  const filtered = useMemo(() => {
+    if (!statusFilter) return customers;
+    return customers.filter((c) => c.status === statusFilter);
+  }, [customers, statusFilter]);
 
   const totalActive = customers.filter((c) => c.status === "active").length;
   const totalSpent  = customers.reduce((s, c) => s + c.totalSpent, 0);
-
-  const filtered = useMemo(() => {
-    let data = [...customers];
-    if (search) {
-      const q = search.toLowerCase();
-      data = data.filter(
-        (c) =>
-          c.name.toLowerCase().includes(q) ||
-          c.phone.includes(q) ||
-          c.email.toLowerCase().includes(q) ||
-          c.city.toLowerCase().includes(q)
-      );
-    }
-    if (statusFilter) data = data.filter((c) => c.status === statusFilter);
-    return data;
-  }, [customers, search, statusFilter]);
-
-  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
-  const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-page-title">العملاء</h1>
-          <p className="text-small mt-0.5">{loading ? "جارٍ التحميل..." : `${customers.length} عميل من Shopify`}</p>
+          <p className="text-small mt-0.5">
+            {loading ? "جارٍ التحميل..."
+              : totalCount != null ? `${totalCount.toLocaleString("en-US")} عميل على Shopify`
+              : `${customers.length} عميل محمّل`}
+          </p>
         </div>
         <Button
           variant="secondary" size="sm"
-          icon={syncing ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-          onClick={syncCustomers} disabled={syncing}
+          icon={loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+          onClick={() => { setCustomers([]); setNextPageInfo(null); loadCustomers(search); fetchTotal(); }}
+          disabled={loading}
         >
-          {syncing ? "جارٍ المزامنة..." : "مزامنة"}
+          تحديث
         </Button>
       </div>
 
@@ -107,14 +114,14 @@ export default function CustomersPage() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="card p-4">
           <p className="text-xs text-[var(--text-muted)] mb-1">إجمالي العملاء</p>
-          <p className="text-stat-md" dir="ltr">{customers.length}</p>
+          <p className="text-stat-md" dir="ltr">{totalCount?.toLocaleString("en-US") ?? "..."}</p>
         </div>
         <div className="card p-4">
-          <p className="text-xs text-[var(--text-muted)] mb-1">العملاء النشطون</p>
-          <p className="text-stat-md text-[var(--success)]" dir="ltr">{totalActive}</p>
+          <p className="text-xs text-[var(--text-muted)] mb-1">محملون الآن</p>
+          <p className="text-stat-md text-[var(--success)]" dir="ltr">{customers.length.toLocaleString("en-US")}</p>
         </div>
         <div className="card p-4">
-          <p className="text-xs text-[var(--text-muted)] mb-1">إجمالي المشتريات</p>
+          <p className="text-xs text-[var(--text-muted)] mb-1">إجمالي المشتريات (محملة)</p>
           <p className="text-stat-md text-[var(--primary)]" dir="ltr">
             {totalSpent.toLocaleString("en-US")} <span className="text-sm font-normal text-[var(--text-muted)]">ج.م</span>
           </p>
@@ -124,14 +131,18 @@ export default function CustomersPage() {
       {/* Filters */}
       <div className="card p-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <SearchInput
-            value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-            placeholder="بحث بالاسم أو الهاتف أو البريد..."
-          />
+          <div className="relative">
+            <input
+              value={searchInput}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              placeholder="بحث بالاسم أو الهاتف أو البريد..."
+              className="form-input pl-9"
+            />
+            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+          </div>
           <Select
             value={statusFilter}
-            onChange={(e) => { setStatusFilter(e.target.value as "active" | "inactive" | ""); setPage(1); }}
+            onChange={(e) => setStatusFilter(e.target.value as "active" | "inactive" | "")}
             options={STATUS_OPTIONS}
           />
         </div>
@@ -144,7 +155,7 @@ export default function CustomersPage() {
             <Loader2 size={22} className="animate-spin text-[var(--primary)]" />
             <p className="text-sm text-[var(--text-muted)]">جارٍ تحميل العملاء من Shopify...</p>
           </div>
-        ) : paginated.length === 0 ? (
+        ) : filtered.length === 0 ? (
           <EmptyState icon={<Users size={28} />} title="لا يوجد عملاء" description="لا يوجد عملاء يطابقون معايير البحث" />
         ) : (
           <>
@@ -164,7 +175,7 @@ export default function CustomersPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {paginated.map((customer) => (
+                  {filtered.map((customer) => (
                     <tr key={customer.id}>
                       <td>
                         <div className="flex items-center gap-3">
@@ -205,8 +216,7 @@ export default function CustomersPage() {
                       <td className="text-center">
                         <a
                           href={`https://xeno-eg.myshopify.com/admin/customers/${customer.shopifyId}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                          target="_blank" rel="noopener noreferrer"
                           className="p-1.5 rounded-[var(--radius-sm)] text-[var(--text-muted)] hover:bg-[var(--bg-base)] hover:text-[var(--primary)] transition-colors inline-flex"
                           title="عرض في Shopify"
                         >
@@ -218,9 +228,20 @@ export default function CustomersPage() {
                 </tbody>
               </table>
             </div>
-            {totalPages > 1 && (
-              <div className="px-4 border-t border-[var(--border-subtle)]">
-                <Pagination page={page} totalPages={totalPages} total={filtered.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
+
+            {/* Load more */}
+            {hasMore && (
+              <div className="flex justify-center p-4 border-t border-[var(--border-subtle)]">
+                <Button
+                  variant="secondary" size="sm"
+                  icon={loadingMore ? <Loader2 size={13} className="animate-spin" /> : <ChevronDown size={13} />}
+                  onClick={() => loadCustomers(search, nextPageInfo)}
+                  disabled={loadingMore}
+                >
+                  {loadingMore
+                    ? "جارٍ التحميل..."
+                    : `تحميل المزيد (${customers.length.toLocaleString("en-US")} / ${totalCount?.toLocaleString("en-US") ?? "..."})`}
+                </Button>
               </div>
             )}
           </>
