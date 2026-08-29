@@ -108,37 +108,48 @@ async function onOrderCreate(raw: ShopifyOrderRaw) {
 
   // Send WhatsApp confirmation if service is configured
   if (order.customerPhone) {
-    await sendWhatsApp(order.customerPhone, order.customerName, order.orderNumber, order.total);
+    await sendWhatsApp(raw, order);
   }
 }
 
-async function sendWhatsApp(phone: string, name: string, orderNumber: string, total: number) {
+async function sendWhatsApp(raw: ShopifyOrderRaw, order: ReturnType<typeof normalizeOrder>) {
   const waUrl    = process.env.WA_SERVICE_URL;
   const waSecret = process.env.WA_SECRET;
-  if (!waUrl || !waSecret) return; // silently skip if not configured
+  if (!waUrl || !waSecret) return;
+
+  // Build items list
+  const itemsText = order.items
+    .map((i) => `• ${i.productName}${i.variant ? ` - ${i.variant}` : ""} × ${i.quantity}`)
+    .join("\n");
+
+  const address = [order.address, order.city, order.governorate].filter(Boolean).join(" - ");
 
   const message =
-    `مرحباً ${name} 👋\n` +
-    `✅ تم استلام طلبك بنجاح!\n` +
-    `📦 رقم الطلب: #${orderNumber}\n` +
-    `💰 الإجمالي: ${total.toLocaleString("en-US")} ج.م\n\n` +
-    `سيتم التواصل معك قريباً لتأكيد موعد التسليم.\n` +
-    `شكراً لثقتك في XENO 🛍️`;
+    `👋 أهلاً ${order.customerName}\n` +
+    `شكراً لاختيارك XENO ❤️\n\n` +
+    `📋 *تفاصيل طلبك:*\n` +
+    `🔢 رقم الطلب: #${order.orderNumber}\n` +
+    `📍 العنوان: ${address || "—"}\n` +
+    `📞 الهاتف: ${order.customerPhone}\n` +
+    `🛍️ المنتجات:\n${itemsText}\n` +
+    `💰 الإجمالي: ${order.total.toLocaleString("en-US")} ج.م\n` +
+    `🚚 الشحن عبر J&T خلال 2-3 أيام\n\n` +
+    `للتأكيد اكتب: *تأكيد*\n` +
+    `للتأجيل اكتب: *تأجيل*`;
 
   try {
-    const res = await fetch(`${waUrl}/send`, {
+    const res  = await fetch(`${waUrl}/send`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-wa-secret": waSecret },
-      body: JSON.stringify({ phone, message }),
+      body: JSON.stringify({ phone: order.customerPhone, message }),
     });
     const data = await res.json();
 
-    // Log WhatsApp message to Supabase
     await supabaseAdmin.from("whatsapp_messages").insert({
-      shopify_order_id: 0, // will be filled properly
-      order_number:     orderNumber,
-      phone,
-      customer_name:    name,
+      shopify_order_id: order.shopifyId,
+      order_number:     order.orderNumber,
+      phone:            order.customerPhone,
+      customer_name:    order.customerName,
       template:         "order_confirmation",
       status:           data.ok ? "sent" : "failed",
     });
