@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
-import { CheckCircle2, Clock, HelpCircle, Truck, RefreshCw, Loader2, Send, Calendar } from "lucide-react";
+import { CheckCircle2, Clock, HelpCircle, Truck, RefreshCw, Loader2, Send, Calendar, Package } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
@@ -64,14 +64,17 @@ const RANGES: { key: Range; label: string }[] = [
 
 // ── Component ────────────────────────────────────────────────────────────────
 export default function ConfirmationPage() {
-  const [messages,   setMessages]   = useState<WAMessage[]>([]);
-  const [stats,      setStats]      = useState<Stats>({ confirmed: 0, postponed: 0, pending: 0, shipped: 0 });
-  const [loading,    setLoading]    = useState(true);
-  const [shipping,   setShipping]   = useState(false);
-  const [range,      setRange]      = useState<Range>("today");
-  const [selected,   setSelected]   = useState<Set<string>>(new Set());
+  const [messages,      setMessages]      = useState<WAMessage[]>([]);
+  const [stats,         setStats]         = useState<Stats>({ confirmed: 0, postponed: 0, pending: 0, shipped: 0 });
+  const [loading,       setLoading]       = useState(true);
+  const [shipping,      setShipping]      = useState(false);
+  const [range,         setRange]         = useState<Range>("today");
+  const [selected,      setSelected]      = useState<Set<string>>(new Set());
   const [postponeModal, setPostponeModal] = useState<WAMessage | null>(null);
-  const [postponeDate, setPostponeDate] = useState("");
+  const [postponeDate,  setPostponeDate]  = useState("");
+  const [trackingModal, setTrackingModal] = useState<WAMessage | null>(null);
+  const [trackingNum,   setTrackingNum]   = useState("");
+  const [sendingTrack,  setSendingTrack]  = useState(false);
   const { success, error } = useToast();
 
   async function load() {
@@ -126,6 +129,37 @@ export default function ConfirmationPage() {
       error("خطأ", "فشل الإرسال");
     } finally {
       setShipping(false);
+    }
+  }
+
+  async function sendTracking() {
+    if (!trackingModal || !trackingNum.trim()) return;
+    setSendingTrack(true);
+    try {
+      const res = await fetch("/api/confirmation/send-tracking", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          shopify_order_id: trackingModal.shopify_order_id,
+          order_number:     trackingModal.order_number,
+          customer_name:    trackingModal.customer_name,
+          phone:            trackingModal.phone,
+          tracking_number:  trackingNum.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        success("تم!", `تم إرسال رقم التتبع للعميل ${trackingModal.customer_name}`);
+        setTrackingModal(null);
+        setTrackingNum("");
+        load();
+      } else {
+        error("خطأ", data.error ?? "فشل الإرسال");
+      }
+    } catch {
+      error("خطأ", "فشل الإرسال");
+    } finally {
+      setSendingTrack(false);
     }
   }
 
@@ -284,7 +318,12 @@ export default function ConfirmationPage() {
                           </button>
                         )}
                         {m.shipped && (
-                          <span className="text-[11px] text-[var(--success)]">✓ شُحن</span>
+                          <button
+                            onClick={() => { setTrackingModal(m); setTrackingNum(""); }}
+                            className="text-[11px] px-2 py-1 rounded bg-[var(--bg-base)] text-[var(--success)] hover:opacity-80 transition-opacity flex items-center gap-1 mx-auto"
+                          >
+                            <Package size={11} /> إرسال تتبع
+                          </button>
                         )}
                       </td>
                     </tr>
@@ -295,6 +334,38 @@ export default function ConfirmationPage() {
           </div>
         )}
       </div>
+
+      {/* Tracking modal */}
+      <Modal
+        open={Boolean(trackingModal)}
+        onClose={() => { setTrackingModal(null); setTrackingNum(""); }}
+        title={`إرسال رقم التتبع — طلب #${trackingModal?.order_number}`}
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-[var(--text-secondary)]">
+            أدخل رقم تتبع J&T ليُرسَل للعميل <strong>{trackingModal?.customer_name}</strong> عبر واتساب:
+          </p>
+          <input
+            type="text"
+            placeholder="مثال: JT1234567890"
+            value={trackingNum}
+            onChange={(e) => setTrackingNum(e.target.value)}
+            className="form-input w-full"
+            dir="ltr"
+          />
+          <div className="flex gap-2 justify-end">
+            <Button variant="secondary" size="sm" onClick={() => setTrackingModal(null)}>إلغاء</Button>
+            <Button
+              size="sm"
+              icon={sendingTrack ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+              onClick={sendTracking}
+              disabled={!trackingNum.trim() || sendingTrack}
+            >
+              {sendingTrack ? "جارٍ الإرسال..." : "إرسال للعميل"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Postpone modal */}
       <Modal
