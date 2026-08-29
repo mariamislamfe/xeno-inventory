@@ -1,11 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/client";
 
-// status values coming from WA service:
-//   "confirmed" → delivered (أكّد)
-//   "cancelled"  → cancelled (ألغى)
-// no postpone flow anymore
-
 export async function POST(req: NextRequest) {
   const secret = req.headers.get("x-wa-secret");
   if (secret !== process.env.WA_SECRET)
@@ -35,29 +30,22 @@ export async function POST(req: NextRequest) {
   }
 
   const { data: messages } = await query;
-
-  if (!messages?.length) {
+  if (!messages?.length)
     return NextResponse.json({ ok: true, note: "no matching message found" });
-  }
 
-  const msg = messages[0];
-
-  // Map status → whatsapp_messages.status column
-  const waStatus = status === "confirmed" ? "delivered" : "read";
-
-  await supabaseAdmin
-    .from("whatsapp_messages")
-    .update({ status: waStatus })
-    .eq("id", msg.id);
-
+  const msg    = messages[0];
   const ordNum = msg.order_number ?? order_number ?? "؟";
   const ordId  = msg.shopify_order_id ?? shopify_order_id;
 
-  const detail =
-    status === "confirmed"
-      ? `✅ العميل أكّد الطلب #${ordNum}`
-      : `❌ العميل ألغى الطلب #${ordNum}`;
+  // Update WA message status
+  const waStatus = status === "confirmed" ? "delivered" : "read";
+  await supabaseAdmin.from("whatsapp_messages").update({ status: waStatus }).eq("id", msg.id);
 
+  const detail = status === "confirmed"
+    ? `✅ العميل أكّد الطلب #${ordNum} عبر واتساب`
+    : `❌ العميل ألغى الطلب #${ordNum} عبر واتساب`;
+
+  // Log to activity
   await supabaseAdmin.from("activity_log").insert({
     type:      "whatsapp",
     action:    status,
@@ -67,5 +55,44 @@ export async function POST(req: NextRequest) {
     metadata:  { phone, status, order_number: ordNum },
   });
 
+  // Post note to Shopify order timeline
+  await addShopifyNote(ordId, detail);
+
   return NextResponse.json({ ok: true });
+}
+
+async function addShopifyNote(shopifyOrderId: number | string, note: string) {
+  const shop  = process.env.SHOPIFY_SHOP_DOMAIN;
+  const token = process.env.SHOPIFY_ACCESS_TOKEN;
+  if (!shop || !token || !shopifyOrderId) return;
+
+  try {
+    await fetch(
+      `https://${shop}/admin/api/2024-01/orders/${shopifyOrderId}/metafields.json`,
+      {
+        method:  "POST",
+        headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
+        body:    JSON.stringify({
+          metafield: {
+            namespace: "xeno_wa",
+            key:       "last_status",
+            value:     note,
+            type:      "single_line_text_field",
+          },
+        }),
+      }
+    );
+
+    // Also add to order notes via order update
+    await fetch(
+      `https://${shop}/admin/api/2024-01/orders/${shopifyOrderId}.json`,
+      {
+        method:  "PUT",
+        headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
+        body:    JSON.stringify({ order: { id: shopifyOrderId, note } }),
+      }
+    );
+  } catch (e) {
+    console.error("[whatsapp-reply] Shopify note failed:", e);
+  }
 }
