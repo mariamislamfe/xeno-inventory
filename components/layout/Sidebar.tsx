@@ -16,6 +16,7 @@ import {
   X,
   ArrowLeftRight,
   ClipboardList,
+  CheckCircle2,
 } from "lucide-react";
 
 interface NavItem {
@@ -39,8 +40,9 @@ const navGroups: NavGroup[] = [
   {
     label: "Sales",
     items: [
-      { href: "/dashboard/orders",    label: "الطلبات",  icon: <ShoppingCart size={17} /> },
-      { href: "/dashboard/customers", label: "العملاء",  icon: <Users size={17} /> },
+      { href: "/dashboard/orders",       label: "الطلبات",   icon: <ShoppingCart size={17} /> },
+      { href: "/dashboard/confirmation", label: "التأكيدات", icon: <CheckCircle2 size={17} /> },
+      { href: "/dashboard/customers",    label: "العملاء",   icon: <Users size={17} /> },
     ],
   },
   {
