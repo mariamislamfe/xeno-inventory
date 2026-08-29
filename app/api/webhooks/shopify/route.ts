@@ -119,29 +119,43 @@ async function sendWhatsApp(raw: ShopifyOrderRaw, order: ReturnType<typeof norma
 
   // Build items list
   const itemsText = order.items
-    .map((i) => `• ${i.productName}${i.variant ? ` - ${i.variant}` : ""} × ${i.quantity}`)
+    .map((i) => `   • ${i.productName}${i.variant ? ` (${i.variant})` : ""} × ${i.quantity}`)
     .join("\n");
 
   const address = [order.address, order.city, order.governorate].filter(Boolean).join(" - ");
+  const firstName = order.customerName.split(" ")[0];
 
   const message =
-    `👋 أهلاً ${order.customerName}\n` +
-    `شكراً لاختيارك XENO ❤️\n\n` +
-    `📋 *تفاصيل طلبك:*\n` +
-    `🔢 رقم الطلب: #${order.orderNumber}\n` +
+    `👋 أهلاً ${firstName}!\n` +
+    `شكراً لاختيارك *XENO* 🖤\n\n` +
+    `━━━━━━━━━━━━━━\n` +
+    `🛒 *تفاصيل طلبك:*\n` +
+    `━━━━━━━━━━━━━━\n` +
+    `🔢 رقم الطلب: *#${order.orderNumber}*\n` +
     `📍 العنوان: ${address || "—"}\n` +
-    `📞 الهاتف: ${order.customerPhone}\n` +
-    `🛍️ المنتجات:\n${itemsText}\n` +
-    `💰 الإجمالي: ${order.total.toLocaleString("en-US")} ج.م\n` +
-    `🚚 الشحن عبر J&T خلال 2-3 أيام\n\n` +
-    `للتأكيد اكتب: *تأكيد*\n` +
-    `للتأجيل اكتب: *تأجيل*`;
+    `📞 الهاتف: ${order.customerPhone}\n\n` +
+    `🛍️ *المنتجات:*\n${itemsText}\n\n` +
+    `💰 *الإجمالي: ${order.total.toLocaleString("en-US")} ج.م*\n` +
+    `🚚 الشحن عبر J&T Express خلال 2-3 أيام\n` +
+    `━━━━━━━━━━━━━━\n\n` +
+    `هل تريد تأكيد الطلب؟\n\n` +
+    `1️⃣ — تأكيد الطلب\n` +
+    `2️⃣ — تأجيل الطلب\n\n` +
+    `_فريق XENO في خدمتك دائماً_ 🖤`;
 
   try {
     const res  = await fetch(`${waUrl}/send`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-wa-secret": waSecret },
-      body: JSON.stringify({ phone: order.customerPhone, message }),
+      body: JSON.stringify({
+        phone:   order.customerPhone,
+        message,
+        order: {
+          shopify_order_id: order.shopifyId,
+          order_number:     order.orderNumber,
+          customer_name:    order.customerName,
+        },
+      }),
     });
     const data = await res.json();
 
