@@ -1,6 +1,6 @@
 import crypto from "crypto";
 
-// ── Config ────────────────────────────────────────────────────────────────────
+// ── J&T Express Egypt API Client ─────────────────────────────────────────────
 const BASE_URL       = process.env.JT_BASE_URL      ?? "";
 const UUID           = process.env.JT_UUID          ?? "";
 const CUSTOMER_CODE  = process.env.JT_CUSTOMER_CODE ?? "";
