@@ -146,7 +146,7 @@ export default function ConfirmationPage() {
   function statusInfo(m: WAMessage) {
     if (m.shipped)                return { label: "أُرسل للشحن", variant: "info"    as const, icon: <Truck       size={12} /> };
     if (m.status === "delivered") return { label: "مؤكد ✅",     variant: "success" as const, icon: <CheckCircle2 size={12} /> };
-    if (m.status === "read")      return { label: "ملغي ❌",      variant: "error"   as const, icon: <XCircle     size={12} /> };
+    if (m.status === "read")      return { label: "ملغي ❌",      variant: "danger"  as const, icon: <XCircle     size={12} /> };
     return                               { label: "لم يرد",      variant: "neutral" as const, icon: <HelpCircle  size={12} /> };
   }
 
