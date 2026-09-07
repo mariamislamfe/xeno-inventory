@@ -50,7 +50,6 @@ export default function CustomersPage() {
       setCustomers((prev) => cursor ? [...prev, ...data.customers] : data.customers);
       setHasMore(data.has_more);
       setNextPageInfo(data.next_page_info ?? null);
-      if (!cursor) setTotalCount(null);
     } catch {
       error("خطأ", "تعذر تحميل العملاء من Shopify");
     } finally {
