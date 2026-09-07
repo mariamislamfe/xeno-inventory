@@ -2,7 +2,7 @@
 
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
-import { RefreshCw, Eye, Printer, Truck, Loader2, Search, ChevronDown } from "lucide-react";
+import { RefreshCw, Eye, Printer, Truck, Loader2, Search, ChevronDown, Tag, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { Badge } from "@/components/ui/Badge";
@@ -25,14 +25,49 @@ const PAYMENT_DISPLAY: Record<string, { label: string; variant: "success" | "dan
   refunded: { label: "مسترد",    variant: "neutral" },
 };
 
+// ── Tag color map (Vrobo + common tags) ───────────────────────────────
+const TAG_COLORS: Record<string, string> = {
+  confirmed:      "bg-green-100 text-green-700",
+  مؤكد:           "bg-green-100 text-green-700",
+  cancelled:      "bg-red-100 text-red-700",
+  ملغي:           "bg-red-100 text-red-700",
+  shipped:        "bg-blue-100 text-blue-700",
+  مشحون:          "bg-blue-100 text-blue-700",
+  returned:       "bg-orange-100 text-orange-700",
+  مرتجع:          "bg-orange-100 text-orange-700",
+  "no answer":    "bg-gray-100 text-gray-600",
+  لم_يرد:         "bg-gray-100 text-gray-600",
+  pending:        "bg-yellow-100 text-yellow-700",
+  paid:           "bg-emerald-100 text-emerald-700",
+  unpaid:         "bg-rose-100 text-rose-700",
+  "cash on delivery": "bg-purple-100 text-purple-700",
+  cod:            "bg-purple-100 text-purple-700",
+};
+
+function tagStyle(tag: string) {
+  const key = tag.toLowerCase();
+  return TAG_COLORS[key] ?? "bg-[var(--bg-base)] text-[var(--text-muted)]";
+}
+
+// ── Vrobo quick-filter tags ────────────────────────────────────────────
+const VROBO_TAGS = [
+  { value: "",          label: "كل التاجز" },
+  { value: "confirmed", label: "✅ مؤكد (Vrobo)" },
+  { value: "cancelled", label: "❌ ملغي (Vrobo)" },
+  { value: "shipped",   label: "📦 مشحون (Vrobo)" },
+  { value: "returned",  label: "↩ مرتجع" },
+  { value: "paid",      label: "💰 مدفوع" },
+  { value: "unpaid",    label: "🚫 غير مدفوع" },
+];
+
 // ── Filter tabs ────────────────────────────────────────────────────────
 type TabKey = "any" | "pending" | "fulfilled" | "unfulfilled";
 
-const TABS: { key: TabKey; label: string; color?: string; shopifyParam: Record<string, string> }[] = [
-  { key: "any",         label: "الكل",      shopifyParam: { status: "any" } },
-  { key: "unfulfilled", label: "جديدة",     color: "#f59e0b", shopifyParam: { status: "open", fulfillment_status: "unfulfilled" } },
-  { key: "pending",     label: "قيد التنفيذ", color: "#3b82f6", shopifyParam: { status: "open", fulfillment_status: "partial" } },
-  { key: "fulfilled",   label: "مكتملة",    color: "#22c55e", shopifyParam: { status: "closed", fulfillment_status: "fulfilled" } },
+const TABS: { key: TabKey; label: string; shopifyParam: Record<string, string> }[] = [
+  { key: "any",         label: "الكل",       shopifyParam: { status: "any" } },
+  { key: "unfulfilled", label: "جديدة",      shopifyParam: { status: "open",   fulfillment_status: "unfulfilled" } },
+  { key: "pending",     label: "قيد التنفيذ", shopifyParam: { status: "open",   fulfillment_status: "partial" } },
+  { key: "fulfilled",   label: "مكتملة",     shopifyParam: { status: "closed", fulfillment_status: "fulfilled" } },
 ];
 
 function formatDate(iso: string): string {
@@ -42,35 +77,25 @@ function formatDate(iso: string): string {
   });
 }
 
-function WaStatus({ status }: { status?: string }) {
-  if (!status || status === "not_sent") return null;
-  return (
-    <span className="text-[11px] font-bold"
-      style={{ color: status === "confirmed" ? "#22c55e" : status === "seen" ? "#60a5fa" : "#94a3b8" }}>
-      {status === "confirmed" || status === "seen" ? "✓✓" : "✓"}
-    </span>
-  );
-}
-
 const PAGE_SIZE = 50;
 
 export default function OrdersPage() {
-  const [orders,    setOrders]    = useState<XenoOrder[]>([]);
-  const [loading,   setLoading]   = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore,   setHasMore]   = useState(false);
-  const [activeTab, setActiveTab] = useState<TabKey>("any");
-  const [search,    setSearch]    = useState("");
-  const [searchInput, setSearchInput] = useState("");
+  const [orders,       setOrders]       = useState<XenoOrder[]>([]);
+  const [loading,      setLoading]      = useState(true);
+  const [loadingMore,  setLoadingMore]  = useState(false);
+  const [hasMore,      setHasMore]      = useState(false);
+  const [nextPageInfo, setNextPageInfo] = useState<string | null>(null);
+  const [activeTab,    setActiveTab]    = useState<TabKey>("any");
+  const [search,       setSearch]       = useState("");
+  const [searchInput,  setSearchInput]  = useState("");
+  const [tagFilter,    setTagFilter]    = useState("");
+  const [totalCount,   setTotalCount]   = useState<number | null>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout>>(null);
-  const { success, error } = useToast();
-
-  // Total count from Shopify (from count endpoint)
-  const [totalCount, setTotalCount] = useState<number | null>(null);
+  const { error } = useToast();
 
   async function fetchCount(tab: TabKey) {
     try {
-      const t = TABS.find((t) => t.key === tab)!;
+      const t  = TABS.find((t) => t.key === tab)!;
       const qs = new URLSearchParams(t.shopifyParam).toString();
       const res  = await fetch(`/api/shopify/orders/count?${qs}`);
       const data = await res.json();
@@ -78,19 +103,26 @@ export default function OrdersPage() {
     } catch { setTotalCount(null); }
   }
 
-  async function loadOrders(tab: TabKey, q: string, append = false) {
-    append ? setLoadingMore(true) : setLoading(true);
+  async function loadOrders(tab: TabKey, q: string, tag: string, cursor: string | null = null) {
+    cursor ? setLoadingMore(true) : setLoading(true);
     try {
-      const t = TABS.find((t) => t.key === tab)!;
+      const t      = TABS.find((t) => t.key === tab)!;
       const params = new URLSearchParams({ ...t.shopifyParam, limit: String(PAGE_SIZE) });
-      if (q) params.set("query", q);
+      if (cursor) {
+        // cursor-based: only limit + page_info
+        params.set("page_info", cursor);
+      } else {
+        if (q)   params.set("query", q);
+        if (tag) params.set("tag", tag);
+      }
 
       const res  = await fetch(`/api/shopify/orders?${params}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
 
-      setOrders((prev) => append ? [...prev, ...data.orders] : data.orders);
-      setHasMore(data.has_more);
+      setOrders((prev) => cursor ? [...prev, ...data.orders] : data.orders);
+      setHasMore(data.has_more ?? false);
+      setNextPageInfo(data.next_page_info ?? null);
     } catch {
       error("خطأ", "تعذر تحميل الطلبات من Shopify");
     } finally {
@@ -100,19 +132,28 @@ export default function OrdersPage() {
   }
 
   useEffect(() => {
-    loadOrders(activeTab, search);
+    setOrders([]);
+    setNextPageInfo(null);
+    loadOrders(activeTab, search, tagFilter);
     fetchCount(activeTab);
-  }, [activeTab, search]);
+  }, [activeTab, search, tagFilter]);
 
   function switchTab(key: TabKey) {
     setActiveTab(key);
     setOrders([]);
+    setNextPageInfo(null);
   }
 
   function handleSearchChange(val: string) {
     setSearchInput(val);
     if (searchTimer.current) clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(() => setSearch(val), 500);
+  }
+
+  function handleTagFilter(val: string) {
+    setTagFilter(val);
+    setOrders([]);
+    setNextPageInfo(null);
   }
 
   return (
@@ -130,7 +171,7 @@ export default function OrdersPage() {
         <Button
           variant="secondary" size="sm"
           icon={loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={14} />}
-          onClick={() => { setOrders([]); loadOrders(activeTab, search); fetchCount(activeTab); }}
+          onClick={() => { setOrders([]); setNextPageInfo(null); loadOrders(activeTab, search, tagFilter); fetchCount(activeTab); }}
           disabled={loading}
         >
           تحديث
@@ -155,17 +196,41 @@ export default function OrdersPage() {
         })}
       </div>
 
-      {/* Search */}
+      {/* Search + Tag Filter */}
       <div className="card p-3">
-        <div className="relative">
-          <input
-            value={searchInput}
-            onChange={(e) => handleSearchChange(e.target.value)}
-            placeholder="بحث برقم الطلب أو اسم العميل..."
-            className="form-input pl-9"
-          />
-          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="relative">
+            <input
+              value={searchInput}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              placeholder="بحث برقم الطلب أو اسم العميل..."
+              className="form-input pl-9"
+            />
+            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+          </div>
+          {/* Vrobo Tag Filter */}
+          <div className="relative">
+            <select
+              value={tagFilter}
+              onChange={(e) => handleTagFilter(e.target.value)}
+              className="form-input appearance-none pr-4 pl-8 cursor-pointer"
+            >
+              {VROBO_TAGS.map((t) => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </select>
+            <Tag size={13} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)] pointer-events-none" />
+          </div>
         </div>
+        {tagFilter && (
+          <div className="mt-2 flex items-center gap-2">
+            <span className="text-[11px] text-[var(--text-muted)]">فلتر نشط:</span>
+            <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${tagStyle(tagFilter)}`}>{tagFilter}</span>
+            <button onClick={() => handleTagFilter("")} className="text-[var(--text-muted)] hover:text-[var(--danger)] transition-colors">
+              <X size={12} />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Table */}
@@ -189,6 +254,7 @@ export default function OrdersPage() {
                     <th>الإجمالي</th>
                     <th>الحالة</th>
                     <th>الدفع</th>
+                    <th>تاجز Shopify</th>
                     <th>رقم التتبع</th>
                     <th>التاريخ</th>
                     <th className="text-center">إجراءات</th>
@@ -231,6 +297,30 @@ export default function OrdersPage() {
                         </td>
                         <td><Badge variant={st.variant} size="sm">{st.label}</Badge></td>
                         <td><Badge variant={pm.variant} size="sm">{pm.label}</Badge></td>
+
+                        {/* Shopify Tags (from Vrobo + other apps) */}
+                        <td>
+                          <div className="flex flex-wrap gap-1 max-w-[160px]">
+                            {order.tags.length === 0 ? (
+                              <span className="text-[11px] text-[var(--text-muted)]">—</span>
+                            ) : (
+                              order.tags.slice(0, 4).map((tag) => (
+                                <span
+                                  key={tag}
+                                  className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap cursor-pointer hover:opacity-80 transition-opacity ${tagStyle(tag)}`}
+                                  title={`فلتر: ${tag}`}
+                                  onClick={() => handleTagFilter(tag)}
+                                >
+                                  {tag}
+                                </span>
+                              ))
+                            )}
+                            {order.tags.length > 4 && (
+                              <span className="text-[10px] text-[var(--text-muted)]">+{order.tags.length - 4}</span>
+                            )}
+                          </div>
+                        </td>
+
                         <td>
                           {order.trackingNumber ? (
                             <span className="text-[11px] font-mono text-[var(--success)]" dir="ltr">{order.trackingNumber}</span>
@@ -272,16 +362,18 @@ export default function OrdersPage() {
               </table>
             </div>
 
-            {/* Load more */}
+            {/* Load more — now with correct cursor */}
             {hasMore && (
               <div className="flex justify-center p-4 border-t border-[var(--border-subtle)]">
                 <Button
                   variant="secondary" size="sm"
                   icon={loadingMore ? <Loader2 size={13} className="animate-spin" /> : <ChevronDown size={13} />}
-                  onClick={() => loadOrders(activeTab, search, true)}
+                  onClick={() => loadOrders(activeTab, search, tagFilter, nextPageInfo)}
                   disabled={loadingMore}
                 >
-                  {loadingMore ? "جارٍ التحميل..." : `تحميل المزيد (${orders.length.toLocaleString("en-US")} / ${totalCount?.toLocaleString("en-US") ?? "..."})`}
+                  {loadingMore
+                    ? "جارٍ التحميل..."
+                    : `تحميل المزيد (${orders.length.toLocaleString("en-US")} / ${totalCount?.toLocaleString("en-US") ?? "..."})`}
                 </Button>
               </div>
             )}
