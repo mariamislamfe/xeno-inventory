@@ -1,17 +1,10 @@
 import React from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import {
-  ArrowRight,
-  Package,
-  Tag,
-  TrendingUp,
-  ShoppingCart,
-} from "lucide-react";
-import { getProductById } from "@/lib/services/products";
+import { ArrowRight, Package, Tag, TrendingUp } from "lucide-react";
+import { getShopifyProduct } from "@/lib/shopify/products";
 import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
-import { mockOrders } from "@/lib/mock/orders";
 
 interface ProductPageProps {
   params: Promise<{ id: string }>;
@@ -19,13 +12,18 @@ interface ProductPageProps {
 
 export default async function ProductPage({ params }: ProductPageProps) {
   const { id } = await params;
-  const product = await getProductById(id);
-
+  const product = await getShopifyProduct(id);
   if (!product) notFound();
 
-  const recentOrders = mockOrders.filter((o) =>
-    o.items.some((i) => i.productId === product.id)
-  ).slice(0, 5);
+  const stockColor = product.status === "out_of_stock" ? "var(--danger)"
+    : product.status === "low_stock"   ? "var(--warning)"
+    : "var(--success)";
+  const stockVariant = product.status === "out_of_stock" ? "danger"
+    : product.status === "low_stock"   ? "warning"
+    : "success";
+  const stockLabel = product.status === "out_of_stock" ? "نفد المخزون"
+    : product.status === "low_stock"   ? "مخزون منخفض"
+    : "متوفر";
 
   return (
     <div className="space-y-5">
@@ -44,19 +42,19 @@ export default async function ProductPage({ params }: ProductPageProps) {
         <div className="lg:col-span-2 space-y-5">
           <Card>
             <div className="flex gap-5">
-              <div className="w-32 h-32 rounded-[var(--radius-lg)] bg-[var(--bg-base)] flex items-center justify-center flex-shrink-0">
-                <Package size={40} className="text-[var(--border-color)]" />
-              </div>
+              {product.image ? (
+                <img src={product.image} alt={product.name}
+                  className="w-32 h-32 rounded-[var(--radius-lg)] object-cover flex-shrink-0 bg-[var(--bg-base)]" />
+              ) : (
+                <div className="w-32 h-32 rounded-[var(--radius-lg)] bg-[var(--bg-base)] flex items-center justify-center flex-shrink-0">
+                  <Package size={40} className="text-[var(--border-color)]" />
+                </div>
+              )}
               <div className="flex-1 space-y-2">
                 <div className="flex items-start justify-between gap-3">
                   <h1 className="text-page-title">{product.name}</h1>
-                  <Badge variant={product.status === "active" ? "success" : "neutral"}>
-                    {product.status === "active" ? "نشط" : product.status === "inactive" ? "غير نشط" : "مسودة"}
-                  </Badge>
+                  <Badge variant={stockVariant} dot>{stockLabel}</Badge>
                 </div>
-                {product.description && (
-                  <p className="text-sm text-[var(--text-secondary)]">{product.description}</p>
-                )}
                 <div className="flex flex-wrap gap-4 pt-2">
                   <div>
                     <p className="text-[11px] text-[var(--text-muted)]">SKU</p>
@@ -77,42 +75,41 @@ export default async function ProductPage({ params }: ProductPageProps) {
             </div>
           </Card>
 
-          {/* Recent Orders */}
-          <Card>
-            <h2 className="text-section-title mb-4">الطلبات الأخيرة</h2>
-            {recentOrders.length === 0 ? (
-              <p className="text-sm text-[var(--text-muted)] text-center py-6">
-                لا توجد طلبات لهذا المنتج
-              </p>
-            ) : (
-              <div className="space-y-3">
-                {recentOrders.map((order) => {
-                  const item = order.items.find((i) => i.productId === product.id);
-                  return (
-                    <div key={order.id} className="flex items-center justify-between gap-4 py-2 border-b border-[var(--border-subtle)] last:border-0">
-                      <div>
-                        <Link href={`/dashboard/orders/${order.id}`} className="text-xs font-mono text-[var(--primary)] hover:underline">
-                          {order.orderNumber}
-                        </Link>
-                        <p className="text-[11px] text-[var(--text-muted)]">{order.customerName}</p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-xs font-medium text-[var(--text-primary)]">
-                          × {item?.quantity}
-                        </p>
-                      </div>
-                      <p className="text-xs font-semibold text-[var(--text-primary)]">
-                        {item?.total.toLocaleString("ar-EG")} ج.م
-                      </p>
-                    </div>
-                  );
-                })}
+          {/* Variants */}
+          {product.variants.length > 1 && (
+            <Card>
+              <h2 className="text-section-title mb-4">المتغيرات</h2>
+              <div className="table-container">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>المتغير</th>
+                      <th>SKU</th>
+                      <th>السعر</th>
+                      <th>المخزون</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {product.variants.map((v) => (
+                      <tr key={v.id}>
+                        <td><span className="text-xs text-[var(--text-primary)]">{v.title}</span></td>
+                        <td><span className="font-mono text-xs text-[var(--text-muted)]">{v.sku}</span></td>
+                        <td><span className="text-xs font-semibold text-[var(--text-primary)]">{v.price.toLocaleString("ar-EG")} ج.م</span></td>
+                        <td>
+                          <span className={`text-xs font-bold ${v.stock === 0 ? "text-[var(--danger)]" : v.stock < 10 ? "text-[var(--warning)]" : "text-[var(--success)]"}`}>
+                            {v.stock}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            )}
-          </Card>
+            </Card>
+          )}
         </div>
 
-        {/* Sidebar Info */}
+        {/* Sidebar */}
         <div className="space-y-5">
           <Card>
             <h2 className="text-section-title mb-4">التسعير</h2>
@@ -123,17 +120,6 @@ export default async function ProductPage({ params }: ProductPageProps) {
                   {product.price.toLocaleString("ar-EG")} <span className="text-sm font-normal text-[var(--text-muted)]">ج.م</span>
                 </p>
               </div>
-              {product.comparePrice && (
-                <div>
-                  <p className="text-[11px] text-[var(--text-muted)]">السعر الأصلي</p>
-                  <p className="text-sm text-[var(--text-muted)] line-through">
-                    {product.comparePrice.toLocaleString("ar-EG")} ج.م
-                  </p>
-                  <Badge variant="danger" size="sm" className="mt-1">
-                    خصم {Math.round(((product.comparePrice - product.price) / product.comparePrice) * 100)}%
-                  </Badge>
-                </div>
-              )}
             </div>
           </Card>
 
@@ -141,61 +127,35 @@ export default async function ProductPage({ params }: ProductPageProps) {
             <h2 className="text-section-title mb-4">المخزون</h2>
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <span className="text-xs text-[var(--text-muted)]">المتوفر</span>
-                <span className={`text-xl font-bold ${product.inventory === 0 ? "text-[var(--danger)]" : product.inventory < 10 ? "text-[var(--warning)]" : "text-[var(--success)]"}`}>
-                  {product.inventory}
-                </span>
+                <span className="text-xs text-[var(--text-muted)]">إجمالي المتوفر</span>
+                <span className="text-xl font-bold" style={{ color: stockColor }}>{product.stock}</span>
               </div>
               <div className="progress-bar">
-                <div
-                  className="progress-bar-fill"
-                  style={{
-                    width: `${Math.min(100, (product.inventory / 100) * 100)}%`,
-                    background: product.inventory === 0
-                      ? "var(--danger)"
-                      : product.inventory < 10
-                      ? "var(--warning)"
-                      : "var(--success)",
-                  }}
-                />
+                <div className="progress-bar-fill" style={{
+                  width: `${Math.min(100, (product.stock / 100) * 100)}%`,
+                  background: stockColor,
+                }} />
               </div>
-              {product.inventory === 0 && (
-                <Badge variant="danger" dot>نفد المخزون</Badge>
-              )}
-              {product.inventory > 0 && product.inventory < 10 && (
-                <Badge variant="warning" dot>مخزون منخفض</Badge>
-              )}
-              {product.inventory >= 10 && (
-                <Badge variant="success" dot>متوفر</Badge>
-              )}
+              <Badge variant={stockVariant} dot>{stockLabel}</Badge>
             </div>
           </Card>
 
           <Card>
-            <h2 className="text-section-title mb-4">إحصائيات المبيعات</h2>
+            <h2 className="text-section-title mb-4">معلومات إضافية</h2>
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <TrendingUp size={14} className="text-[var(--success)]" />
-                  <span className="text-xs text-[var(--text-muted)]">إجمالي المبيعات</span>
+                  <span className="text-xs text-[var(--text-muted)]">عدد المتغيرات</span>
                 </div>
-                <span className="text-sm font-bold text-[var(--text-primary)]">{product.totalSales}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <ShoppingCart size={14} className="text-[var(--primary)]" />
-                  <span className="text-xs text-[var(--text-muted)]">الإيراد الإجمالي</span>
-                </div>
-                <span className="text-sm font-bold text-[var(--primary)]">
-                  {(product.totalSales * product.price).toLocaleString("ar-EG")} ج.م
-                </span>
+                <span className="text-sm font-bold text-[var(--text-primary)]">{product.variants.length}</span>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Tag size={14} className="text-[var(--orange)]" />
-                  <span className="text-xs text-[var(--text-muted)]">الطلبات المرتبطة</span>
+                  <span className="text-xs text-[var(--text-muted)]">Shopify ID</span>
                 </div>
-                <span className="text-sm font-bold text-[var(--text-primary)]">{recentOrders.length}</span>
+                <span className="text-sm font-mono text-[var(--text-muted)]">{product.shopifyId}</span>
               </div>
             </div>
           </Card>

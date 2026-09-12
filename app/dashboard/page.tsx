@@ -4,7 +4,7 @@ import { InventoryLevelChart } from "@/components/dashboard/InventoryLevelChart"
 import { InventoryAlertCard } from "@/components/dashboard/InventoryAlertCard";
 import { RecentTransactions } from "@/components/dashboard/RecentTransactions";
 import { QuickTransaction } from "@/components/dashboard/QuickTransaction";
-import { mockNotifications } from "@/lib/mock/notifications";
+import { supabaseAdmin } from "@/lib/supabase/client";
 import {
   getInventoryStats,
   getOutOfStockItems,
@@ -25,15 +25,16 @@ function fmtDelta(n: number): string {
 }
 
 export default async function DashboardPage() {
-  const [stats, outOfStock, lowStock, productLevels, transactions] = await Promise.all([
+  const [stats, outOfStock, lowStock, productLevels, transactions, notifRes] = await Promise.all([
     getInventoryStats(),
     getOutOfStockItems(),
     getLowStockItems(),
     getProductStockLevels(),
     getRecentTransactions(5),
+    supabaseAdmin.from("activity_log").select("id, type, action, detail, created_at").order("created_at", { ascending: false }).limit(4),
   ]);
 
-  const recentNotifications = mockNotifications.slice(0, 4);
+  const recentNotifications = notifRes.data ?? [];
 
   return (
     <div className="space-y-5">
@@ -109,25 +110,20 @@ export default async function DashboardPage() {
             <h2 className="text-section-title">تنبيهات المخزون</h2>
           </div>
           <div className="space-y-2">
-            {mockNotifications
-              .filter((n) => n.type === "inventory")
-              .map((n) => (
-                <div
-                  key={n.id}
-                  className="flex items-start gap-2.5 p-3 rounded-[var(--radius-md)] bg-[var(--bg-base)]"
-                >
-                  <span
-                    className="w-2 h-2 rounded-full flex-shrink-0 mt-1.5"
-                    style={{ background: n.read ? "var(--text-muted)" : "var(--danger)" }}
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-semibold text-[var(--text-primary)]">{n.title}</p>
-                    <p className="text-[11px] text-[var(--text-muted)] mt-0.5 leading-relaxed">
-                      {n.message}
-                    </p>
-                  </div>
+            {lowStock.slice(0, 4).map((item) => (
+              <div key={item.id} className="flex items-start gap-2.5 p-3 rounded-[var(--radius-md)] bg-[var(--bg-base)]">
+                <span className="w-2 h-2 rounded-full flex-shrink-0 mt-1.5" style={{ background: "var(--warning)" }} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-[var(--text-primary)]">{item.productName}</p>
+                  <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
+                    متبقي {item.currentStock} وحدة (SKU: {item.sku})
+                  </p>
                 </div>
-              ))}
+              </div>
+            ))}
+            {lowStock.length === 0 && (
+              <p className="text-xs text-[var(--text-muted)] text-center py-4">لا توجد تنبيهات</p>
+            )}
           </div>
         </Card>
       </div>
@@ -140,32 +136,26 @@ export default async function DashboardPage() {
 
         <Card padding="md">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-section-title">أحدث الإشعارات</h2>
+            <h2 className="text-section-title">أحدث الأحداث</h2>
           </div>
           <div className="space-y-2">
-            {recentNotifications.map((n) => (
-              <div
-                key={n.id}
-                className="flex items-start gap-2.5 p-3 rounded-[var(--radius-md)] bg-[var(--bg-base)]"
-              >
-                <span
-                  className="w-2 h-2 rounded-full flex-shrink-0 mt-1.5"
-                  style={{
-                    background: n.type === "order"    ? "#3b82f6"
-                              : n.type === "inventory" ? "#f59e0b"
-                              : n.type === "shipment"  ? "#8b5cf6"
-                              : "#6b7280",
-                  }}
-                />
+            {recentNotifications.map((n: { id: string; type: string; action: string; detail: string | null; created_at: string }) => (
+              <div key={n.id} className="flex items-start gap-2.5 p-3 rounded-[var(--radius-md)] bg-[var(--bg-base)]">
+                <span className="w-2 h-2 rounded-full flex-shrink-0 mt-1.5" style={{
+                  background: n.type === "order" ? "#3b82f6"
+                    : n.type === "inventory" ? "#f59e0b"
+                    : n.type === "shipment"  ? "#8b5cf6"
+                    : "#6b7280",
+                }} />
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-[var(--text-primary)]">{n.title}</p>
-                  <p className="text-[11px] text-[var(--text-muted)] mt-0.5">{n.message}</p>
+                  <p className="text-xs font-semibold text-[var(--text-primary)]">{n.action}</p>
+                  {n.detail && <p className="text-[11px] text-[var(--text-muted)] mt-0.5 line-clamp-1">{n.detail}</p>}
                 </div>
-                {!n.read && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--primary)] flex-shrink-0 mt-1.5" />
-                )}
               </div>
             ))}
+            {recentNotifications.length === 0 && (
+              <p className="text-xs text-[var(--text-muted)] text-center py-4">لا توجد أحداث حديثة</p>
+            )}
           </div>
         </Card>
       </div>

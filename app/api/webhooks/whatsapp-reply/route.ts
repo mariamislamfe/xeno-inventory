@@ -62,13 +62,14 @@ export async function POST(req: NextRequest) {
 }
 
 async function addShopifyNote(shopifyOrderId: number | string, note: string) {
-  const shop  = process.env.SHOPIFY_SHOP_DOMAIN;
-  const token = process.env.SHOPIFY_ACCESS_TOKEN;
+  const shop    = process.env.SHOPIFY_SHOP;
+  const token   = process.env.SHOPIFY_ACCESS_TOKEN;
+  const version = process.env.SHOPIFY_API_VERSION ?? "2026-07";
   if (!shop || !token || !shopifyOrderId) return;
 
   try {
     await fetch(
-      `https://${shop}/admin/api/2024-01/orders/${shopifyOrderId}/metafields.json`,
+      `https://${shop}/admin/api/${version}/orders/${shopifyOrderId}/metafields.json`,
       {
         method:  "POST",
         headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
@@ -85,7 +86,7 @@ async function addShopifyNote(shopifyOrderId: number | string, note: string) {
 
     // Also add to order notes via order update
     await fetch(
-      `https://${shop}/admin/api/2024-01/orders/${shopifyOrderId}.json`,
+      `https://${shop}/admin/api/${version}/orders/${shopifyOrderId}.json`,
       {
         method:  "PUT",
         headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },

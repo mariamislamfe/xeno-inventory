@@ -7,8 +7,13 @@ import { SearchInput } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
-import { mockUsers } from "@/lib/mock/users";
 import type { User } from "@/lib/types";
+
+// Placeholder users — real user management requires Supabase Auth (future)
+const mockUsers: User[] = [
+  { id: "user-001", name: "محمد الإداري",  email: "admin@xeno.com",     role: "admin",             status: "active", lastLogin: new Date().toISOString(), createdAt: "2025-08-01T00:00:00Z" },
+  { id: "user-002", name: "مدير المخزون",  email: "inventory@xeno.com", role: "inventory_manager", status: "active", lastLogin: new Date().toISOString(), createdAt: "2025-08-01T00:00:00Z" },
+];
 
 // ── Permission system ──────────────────────────────────────────────────
 type Permission =

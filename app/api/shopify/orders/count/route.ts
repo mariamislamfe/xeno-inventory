@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { shopifyFetch } from "@/lib/shopify/client";
 
-export const revalidate = 60;
+export const revalidate = 0;
 
 export async function GET(req: NextRequest) {
   try {

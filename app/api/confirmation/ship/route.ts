@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
       customer_name:    o.customer_name,
       phone:            o.phone,
       provider:         "J&T Express",
-      status:           jtResult.ok && jtResult.trackingNumber ? "shipped" : "pending",
+      status:           jtResult.ok && jtResult.trackingNumber ? "picked_up" : "pending",
       tracking_number:  jtResult.trackingNumber ?? null,
     }, { onConflict: "shopify_order_id" });
 
@@ -56,9 +56,10 @@ export async function POST(req: NextRequest) {
     metadata:  { results },
   });
 
+  const successCount = results.filter(r => r.ok).length;
   return NextResponse.json({
-    ok:     true,
-    count:  results.filter(r => r.ok).length,
+    ok:     successCount > 0,
+    count:  successCount,
     failed: results.filter(r => !r.ok).length,
     results,
   });
@@ -67,14 +68,15 @@ export async function POST(req: NextRequest) {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function fetchShopifyOrder(shopifyOrderId: number) {
-  const shop  = process.env.SHOPIFY_SHOP_DOMAIN;
-  const token = process.env.SHOPIFY_ACCESS_TOKEN;
+  const shop    = process.env.SHOPIFY_SHOP;
+  const token   = process.env.SHOPIFY_ACCESS_TOKEN;
+  const version = process.env.SHOPIFY_API_VERSION ?? "2026-07";
   if (!shop || !token) return null;
 
   try {
     const res  = await fetch(
-      `https://${shop}/admin/api/2024-01/orders/${shopifyOrderId}.json?fields=id,order_number,total_price,shipping_address,line_items`,
-      { headers: { "X-Shopify-Access-Token": token } }
+      `https://${shop}/admin/api/${version}/orders/${shopifyOrderId}.json?fields=id,order_number,total_price,shipping_address,line_items`,
+      { headers: { "X-Shopify-Access-Token": token }, cache: "no-store" }
     );
     const data = await res.json();
     const ord  = data?.order;

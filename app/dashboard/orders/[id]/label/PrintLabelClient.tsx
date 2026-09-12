@@ -1,16 +1,15 @@
 "use client";
 
 import React, { useEffect } from "react";
-import type { Order } from "@/lib/types";
+import type { XenoOrder } from "@/lib/shopify/orders";
 
-interface Props { order: Order }
+interface Props { order: XenoOrder }
 
-/* ── SVG Barcode (Code-like pattern from string) ── */
+/* ── SVG Barcode ── */
 function SvgBarcode({ value, width = 200, height = 50 }: { value: string; width?: number; height?: number }) {
   const bars: { x: number; w: number; dark: boolean }[] = [];
   let x = 0;
   const unit = width / (value.length * 11 + 20);
-  // Encode each char as alternating bars
   [...value].forEach((ch) => {
     const code = ch.charCodeAt(0);
     for (let b = 0; b < 9; b++) {
@@ -30,7 +29,7 @@ function SvgBarcode({ value, width = 200, height = 50 }: { value: string; width?
 }
 
 export function PrintLabelClient({ order }: Props) {
-  const tracking = order.autoTrackingNumber ?? order.trackingNumber ?? `XENO${order.orderNumber.replace("#", "")}`;
+  const tracking = order.trackingNumber ?? `XENO${order.orderNumber.replace("#", "")}`;
   const today = new Date().toLocaleDateString("ar-EG", { year: "numeric", month: "long", day: "numeric" });
 
   useEffect(() => {
@@ -71,7 +70,6 @@ export function PrintLabelClient({ order }: Props) {
         .btn-print { background: #2563eb; color: white; }
         .btn-close { background: #e5e7eb; color: #374151; }
 
-        /* ── The Label ── */
         .label {
           width: 80mm;
           min-height: 130mm;
@@ -84,7 +82,6 @@ export function PrintLabelClient({ order }: Props) {
           direction: rtl;
         }
 
-        /* Sections */
         .label-header {
           background: #0f172b;
           color: white;
@@ -94,26 +91,9 @@ export function PrintLabelClient({ order }: Props) {
           justify-content: space-between;
         }
 
-        .label-brand {
-          font-size: 15pt;
-          font-weight: 900;
-          letter-spacing: 3px;
-          color: white;
-        }
-
-        .label-brand-sub {
-          font-size: 6pt;
-          color: #94a3b8;
-          letter-spacing: 1px;
-          margin-top: 1px;
-        }
-
-        .label-provider {
-          text-align: left;
-          font-size: 7pt;
-          color: #94a3b8;
-        }
-
+        .label-brand { font-size: 15pt; font-weight: 900; letter-spacing: 3px; color: white; }
+        .label-brand-sub { font-size: 6pt; color: #94a3b8; letter-spacing: 1px; margin-top: 1px; }
+        .label-provider { text-align: left; font-size: 7pt; color: #94a3b8; }
         .label-provider strong { color: white; font-size: 8pt; display: block; }
 
         .label-tracking {
@@ -143,17 +123,8 @@ export function PrintLabelClient({ order }: Props) {
           font-size: 8pt;
         }
 
-        .label-order-row .label-order-num {
-          font-weight: 900;
-          font-size: 10pt;
-          letter-spacing: 1px;
-          direction: ltr;
-        }
-
-        .label-order-row .label-date {
-          color: #64748b;
-          font-size: 7pt;
-        }
+        .label-order-row .label-order-num { font-weight: 900; font-size: 10pt; letter-spacing: 1px; direction: ltr; }
+        .label-order-row .label-date { color: #64748b; font-size: 7pt; }
 
         .label-section {
           padding: 2mm 4mm;
@@ -169,28 +140,9 @@ export function PrintLabelClient({ order }: Props) {
           margin-bottom: 1.5mm;
         }
 
-        .label-customer-name {
-          font-size: 12pt;
-          font-weight: 800;
-          color: #0f172b;
-          line-height: 1.2;
-        }
-
-        .label-customer-phone {
-          font-size: 9pt;
-          color: #374151;
-          direction: ltr;
-          display: inline-block;
-          margin-top: 1mm;
-          font-weight: 600;
-        }
-
-        .label-customer-address {
-          font-size: 8pt;
-          color: #4b5563;
-          margin-top: 1mm;
-          line-height: 1.4;
-        }
+        .label-customer-name { font-size: 12pt; font-weight: 800; color: #0f172b; line-height: 1.2; }
+        .label-customer-phone { font-size: 9pt; color: #374151; direction: ltr; display: inline-block; margin-top: 1mm; font-weight: 600; }
+        .label-customer-address { font-size: 8pt; color: #4b5563; margin-top: 1mm; line-height: 1.4; }
 
         .label-product-row {
           display: flex;
@@ -202,7 +154,6 @@ export function PrintLabelClient({ order }: Props) {
         }
 
         .label-product-row:last-child { border-bottom: none; }
-
         .label-product-name { color: #1e293b; flex: 1; }
         .label-product-sku  { color: #64748b; font-size: 6.5pt; direction: ltr; margin-right: 2mm; }
         .label-product-qty  { font-weight: 700; color: #0f172b; flex-shrink: 0; }
@@ -228,7 +179,6 @@ export function PrintLabelClient({ order }: Props) {
           background: #f8fafc;
         }
 
-        /* ── Print ── */
         @media print {
           body { background: white; display: block; }
           .toolbar { display: none !important; }
@@ -246,16 +196,12 @@ export function PrintLabelClient({ order }: Props) {
         }
       `}</style>
 
-      {/* Screen toolbar */}
       <div className="toolbar">
         <button className="btn-print" onClick={() => window.print()}>طباعة البوليصة</button>
         <button className="btn-close" onClick={() => window.history.back()}>رجوع</button>
       </div>
 
-      {/* ══ LABEL ══ */}
       <div className="label">
-
-        {/* Header */}
         <div className="label-header">
           <div>
             <div className="label-brand">XENO</div>
@@ -267,13 +213,11 @@ export function PrintLabelClient({ order }: Props) {
           </div>
         </div>
 
-        {/* Tracking barcode */}
         <div className="label-tracking">
           <SvgBarcode value={tracking} width={240} height={45} />
           <div className="label-tracking-num">{tracking}</div>
         </div>
 
-        {/* Order number + date */}
         <div className="label-order-row">
           <div>
             <div style={{ fontSize: "6pt", color: "#94a3b8" }}>رقم الطلب</div>
@@ -282,18 +226,16 @@ export function PrintLabelClient({ order }: Props) {
           <div className="label-date">{today}</div>
         </div>
 
-        {/* Customer */}
         <div className="label-section">
           <div className="label-section-title">المستلم</div>
           <div className="label-customer-name">{order.customerName}</div>
           <div className="label-customer-phone">{order.customerPhone}</div>
           <div className="label-customer-address">
             {order.address}<br />
-            {order.city}، {order.governorate}
+            {order.city}{order.governorate ? `، ${order.governorate}` : ""}
           </div>
         </div>
 
-        {/* Products */}
         <div className="label-section" style={{ flex: 1 }}>
           <div className="label-section-title">المنتجات ({order.items.length})</div>
           {order.items.map((item) => (
@@ -308,7 +250,6 @@ export function PrintLabelClient({ order }: Props) {
           ))}
         </div>
 
-        {/* Total */}
         <div className="label-total">
           <div className="label-total-label">الإجمالي المطلوب</div>
           <div className="label-total-value" dir="ltr">
@@ -316,11 +257,9 @@ export function PrintLabelClient({ order }: Props) {
           </div>
         </div>
 
-        {/* Footer */}
         <div className="label-footer">
           XENO Inventory OS · Made by Websity
         </div>
-
       </div>
     </>
   );

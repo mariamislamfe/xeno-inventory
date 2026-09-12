@@ -2,11 +2,13 @@ import React from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowRight, Phone, Mail, MapPin, ShoppingCart, TrendingUp, Calendar } from "lucide-react";
-import { getCustomerById } from "@/lib/services/customers";
+import { getShopifyCustomer } from "@/lib/shopify/customers";
+import { shopifyFetch } from "@/lib/shopify/client";
+import { normalizeOrder } from "@/lib/shopify/orders";
+import type { ShopifyOrderRaw } from "@/lib/shopify/orders";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { OrderStatusBadge } from "@/components/orders/OrderStatusBadge";
-import { mockOrders } from "@/lib/mock/orders";
 
 interface CustomerPageProps {
   params: Promise<{ id: string }>;
@@ -14,11 +16,17 @@ interface CustomerPageProps {
 
 export default async function CustomerPage({ params }: CustomerPageProps) {
   const { id } = await params;
-  const customer = await getCustomerById(id);
+
+  const [customer, ordersData] = await Promise.all([
+    getShopifyCustomer(id),
+    shopifyFetch<{ orders: ShopifyOrderRaw[] }>(
+      `/orders.json?customer_id=${id}&limit=8&status=any`
+    ).catch(() => ({ orders: [] })),
+  ]);
 
   if (!customer) notFound();
 
-  const orders = mockOrders.filter((o) => o.customerId === id).slice(0, 8);
+  const orders = ordersData.orders.map(normalizeOrder);
 
   return (
     <div className="space-y-5">
@@ -47,18 +55,24 @@ export default async function CustomerPage({ params }: CustomerPageProps) {
             </div>
 
             <div className="space-y-3 pt-3 border-t border-[var(--border-subtle)]">
-              <a href={`tel:${customer.phone}`} className="flex items-center gap-2.5 text-xs text-[var(--text-secondary)] hover:text-[var(--primary)] transition-colors">
-                <Phone size={14} className="text-[var(--text-muted)]" />
-                {customer.phone}
-              </a>
-              <a href={`mailto:${customer.email}`} className="flex items-center gap-2.5 text-xs text-[var(--text-secondary)] hover:text-[var(--primary)] transition-colors">
-                <Mail size={14} className="text-[var(--text-muted)]" />
-                {customer.email}
-              </a>
-              <div className="flex items-start gap-2.5 text-xs text-[var(--text-secondary)]">
-                <MapPin size={14} className="text-[var(--text-muted)] flex-shrink-0 mt-0.5" />
-                <span>{customer.address}</span>
-              </div>
+              {customer.phone && (
+                <a href={`tel:${customer.phone}`} className="flex items-center gap-2.5 text-xs text-[var(--text-secondary)] hover:text-[var(--primary)] transition-colors">
+                  <Phone size={14} className="text-[var(--text-muted)]" />
+                  {customer.phone}
+                </a>
+              )}
+              {customer.email && (
+                <a href={`mailto:${customer.email}`} className="flex items-center gap-2.5 text-xs text-[var(--text-secondary)] hover:text-[var(--primary)] transition-colors">
+                  <Mail size={14} className="text-[var(--text-muted)]" />
+                  {customer.email}
+                </a>
+              )}
+              {(customer.city || customer.governorate) && (
+                <div className="flex items-start gap-2.5 text-xs text-[var(--text-secondary)]">
+                  <MapPin size={14} className="text-[var(--text-muted)] flex-shrink-0 mt-0.5" />
+                  <span>{[customer.city, customer.governorate].filter(Boolean).join("، ")}</span>
+                </div>
+              )}
               <div className="flex items-center gap-2.5 text-xs text-[var(--text-secondary)]">
                 <Calendar size={14} className="text-[var(--text-muted)]" />
                 عميل منذ {new Date(customer.createdAt).toLocaleDateString("ar-EG", { year: "numeric", month: "long" })}
@@ -75,7 +89,7 @@ export default async function CustomerPage({ params }: CustomerPageProps) {
                   <ShoppingCart size={14} className="text-[var(--primary)]" />
                   <span className="text-xs text-[var(--text-muted)]">عدد الطلبات</span>
                 </div>
-                <span className="text-sm font-bold text-[var(--text-primary)]">{customer.orderCount}</span>
+                <span className="text-sm font-bold text-[var(--text-primary)]">{customer.ordersCount}</span>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -92,8 +106,8 @@ export default async function CustomerPage({ params }: CustomerPageProps) {
                   <span className="text-xs text-[var(--text-muted)]">متوسط قيمة الطلب</span>
                 </div>
                 <span className="text-sm font-bold text-[var(--text-primary)]">
-                  {customer.orderCount > 0
-                    ? Math.round(customer.totalSpent / customer.orderCount).toLocaleString("ar-EG")
+                  {customer.ordersCount > 0
+                    ? Math.round(customer.totalSpent / customer.ordersCount).toLocaleString("ar-EG")
                     : 0}{" "}
                   ج.م
                 </span>
@@ -124,10 +138,10 @@ export default async function CustomerPage({ params }: CustomerPageProps) {
                   </thead>
                   <tbody>
                     {orders.map((order) => (
-                      <tr key={order.id}>
+                      <tr key={order.shopifyId}>
                         <td>
                           <Link
-                            href={`/dashboard/orders/${order.id}`}
+                            href={`/dashboard/orders/${order.shopifyId}`}
                             className="font-mono text-xs text-[var(--primary)] font-semibold hover:underline"
                           >
                             {order.orderNumber}

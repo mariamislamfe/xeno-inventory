@@ -1,23 +1,24 @@
 import React from "react";
 import { Badge } from "@/components/ui/Badge";
-import type { OrderStatus, PaymentStatus, ShippingStatus } from "@/lib/types";
+import type { PaymentStatus, ShippingStatus } from "@/lib/types";
 
 type BadgeVariant = "success" | "warning" | "danger" | "info" | "neutral" | "purple" | "orange" | "primary";
 
-const ORDER_STATUS_CONFIG: Record<
-  OrderStatus,
-  { label: string; variant: BadgeVariant }
-> = {
-  new: { label: "جديد", variant: "info" },
-  reviewing: { label: "قيد المراجعة", variant: "warning" },
-  confirmed: { label: "تم التأكيد", variant: "primary" },
-  processing: { label: "قيد التجهيز", variant: "orange" },
-  processed: { label: "تم التجهيز", variant: "purple" },
+// Covers both old OrderStatus values and XenoOrder.status values
+const ORDER_STATUS_CONFIG: Record<string, { label: string; variant: BadgeVariant }> = {
+  // XenoOrder.status values
+  pending:    { label: "جديد",              variant: "info"    },
+  processing: { label: "قيد التجهيز",       variant: "orange"  },
+  delivered:  { label: "تم التوصيل",        variant: "success" },
+  cancelled:  { label: "ملغي",              variant: "danger"  },
+  returned:   { label: "مرتجع",             variant: "neutral" },
+  // Legacy OrderStatus values (kept for backward compat)
+  new:              { label: "جديد",              variant: "info"    },
+  reviewing:        { label: "قيد المراجعة",      variant: "warning" },
+  confirmed:        { label: "تم التأكيد",        variant: "primary" },
+  processed:        { label: "تم التجهيز",        variant: "purple"  },
   sent_to_shipping: { label: "تم الإرسال للشحن", variant: "primary" },
-  in_delivery: { label: "قيد التوصيل", variant: "warning" },
-  delivered: { label: "تم التوصيل", variant: "success" },
-  cancelled: { label: "ملغي", variant: "danger" },
-  returned: { label: "مرتجع", variant: "neutral" },
+  in_delivery:      { label: "قيد التوصيل",       variant: "warning" },
 };
 
 const PAYMENT_STATUS_CONFIG: Record<
@@ -44,7 +45,7 @@ const SHIPPING_STATUS_CONFIG: Record<
 };
 
 interface OrderStatusBadgeProps {
-  status: OrderStatus;
+  status: string;
   size?: "sm" | "md";
   dot?: boolean;
 }

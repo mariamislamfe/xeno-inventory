@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import Link from "next/link";
 import {
   ArrowRight, CheckCircle2, XCircle, Truck, Phone, Mail, MapPin,
   Package, MessageSquare, Printer, Edit2, Tag, Plus, X,
-  Loader2, ExternalLink, Save,
+  Loader2, ExternalLink, Save, ShoppingBag, AlertCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
@@ -47,6 +47,211 @@ function formatDate(iso: string) {
     year: "numeric", month: "long", day: "numeric",
     hour: "2-digit", minute: "2-digit",
   });
+}
+
+// ── Product Picker ────────────────────────────────────────────────────────────
+interface VariantOpt { id: number; title: string; sku: string; price: number }
+interface ProductOpt { id: number; name: string; variants: VariantOpt[] }
+
+function ProductPicker({ onSelect }: { onSelect: (name: string, variant: string, sku: string, price: number, variantId: number) => void }) {
+  const [q,       setQ]       = useState("");
+  const [results, setResults] = useState<ProductOpt[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [open,    setOpen]    = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout>>(null);
+
+  function search(val: string) {
+    setQ(val); setOpen(true);
+    if (timer.current) clearTimeout(timer.current);
+    if (!val.trim()) { setResults([]); return; }
+    timer.current = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const res  = await fetch(`/api/shopify/products?q=${encodeURIComponent(val)}`);
+        const data = await res.json();
+        setResults((data.products ?? []).map((p: { id: number; name: string; variants: VariantOpt[] }) => p));
+      } catch { setResults([]); }
+      finally  { setLoading(false); }
+    }, 350);
+  }
+
+  function pick(p: ProductOpt, v: VariantOpt) {
+    onSelect(p.name, v.title, v.sku, v.price, v.id);
+    setQ(""); setResults([]); setOpen(false);
+  }
+
+  return (
+    <div className="relative">
+      <input value={q} onChange={(e) => search(e.target.value)}
+        onFocus={() => q && setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 200)}
+        className="form-input text-xs w-full"
+        placeholder="ابحث عن منتج..." />
+      {open && (q.trim() || loading) && (
+        <div className="absolute z-50 top-full right-0 left-0 mt-1 bg-[var(--bg-card)] border border-[var(--border-color)] rounded-[var(--radius-md)] shadow-xl max-h-52 overflow-y-auto">
+          {loading && <div className="flex items-center gap-2 p-3 text-xs text-[var(--text-muted)]"><Loader2 size={12} className="animate-spin" />جارٍ البحث...</div>}
+          {!loading && results.length === 0 && <p className="p-3 text-xs text-[var(--text-muted)]">لم يُعثر على منتجات</p>}
+          {results.map((p) => (
+            <div key={p.id}>
+              <div className="px-3 py-1 text-[11px] font-bold text-[var(--text-muted)] bg-[var(--bg-base)] border-b border-[var(--border-subtle)]">{p.name}</div>
+              {p.variants.map((v) => (
+                <button key={v.id} onMouseDown={() => pick(p, v)}
+                  className="w-full text-right px-3 py-2 hover:bg-[var(--bg-base)] flex items-center justify-between gap-3 transition-colors">
+                  <span className="text-xs text-[var(--text-primary)]">
+                    {v.title ? `${p.name} — ${v.title}` : p.name}
+                  </span>
+                  <span className="text-xs font-bold text-[var(--primary)] flex-shrink-0" dir="ltr">{v.price.toLocaleString("en-US")} ج.م</span>
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Edit Items Modal ──────────────────────────────────────────────────────────
+interface EditItem { id: string; productName: string; variant: string; sku: string; quantity: number; price: number; variantId?: number }
+
+interface EditItemsModalProps {
+  open:    boolean;
+  order:   XenoOrder;
+  onClose: () => void;
+  onSaved: (items: EditItem[], note: string) => void;
+}
+
+function EditItemsModal({ open, order, onClose, onSaved }: EditItemsModalProps) {
+  const [items,  setItems]  = useState<EditItem[]>(order.items.map((i) => ({ ...i })));
+  const [note,   setNote]   = useState(order.note ?? "");
+  const [saving, setSaving] = useState(false);
+  const { success, error }  = useToast();
+
+  function addFromPicker(name: string, variant: string, sku: string, price: number, variantId: number) {
+    const id = `new-${Date.now()}`;
+    setItems((p) => [...p, { id, productName: name, variant, sku, quantity: 1, price, variantId }]);
+  }
+  function remove(id: string)  { setItems((p) => p.filter((i) => i.id !== id)); }
+  function update(id: string, field: "quantity" | "price", val: number) {
+    setItems((p) => p.map((i) => i.id === id ? { ...i, [field]: val } : i));
+  }
+
+  const total = items.reduce((s, i) => s + i.price * i.quantity, 0);
+
+  async function handleSave() {
+    if (items.length === 0) { error("لا توجد منتجات", "أضف منتجاً واحداً على الأقل"); return; }
+    setSaving(true);
+    try {
+      // Build change summary for Shopify note
+      const originalNames = order.items.map((i) => `${i.productName}${i.variant ? ` (${i.variant})` : ""} ×${i.quantity}`).join("، ");
+      const newNames      = items.map((i) => `${i.productName}${i.variant ? ` (${i.variant})` : ""} ×${i.quantity}`).join("، ");
+      const changeNote    = `[تعديل يدوي] الأصل: ${originalNames} | بعد التعديل: ${newNames}`;
+      const fullNote      = note ? `${note}\n${changeNote}` : changeNote;
+
+      // Save override in xeno_ops + update note in Shopify
+      await Promise.all([
+        fetch(`/api/shopify/orders/${order.shopifyId}`, {
+          method:  "PUT",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({ note: fullNote }),
+        }),
+        fetch("/api/confirmation/ops", {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({
+            shopify_order_id: order.shopifyId,
+            order_number:     order.orderNumber,
+            customer_name:    order.customerName,
+            phone:            order.customerPhone,
+            total,
+            op_status:        "confirmed",
+            internal_note:    changeNote,
+          }),
+        }),
+      ]);
+
+      success("تم حفظ التعديلات", "تم تحديث ملاحظة الطلب على Shopify");
+      onSaved(items, fullNote);
+      onClose();
+    } catch (err) {
+      error("خطأ", String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal open={open} onClose={saving ? () => {} : onClose}
+      title="تعديل منتجات الطلب" size="lg"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={saving}>إلغاء</Button>
+          <Button variant="primary" onClick={handleSave} loading={saving} icon={<Save size={14} />}>
+            حفظ التعديلات
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <div className="bg-amber-50 border border-amber-200 rounded-[var(--radius-md)] p-3 flex items-start gap-2">
+          <AlertCircle size={14} className="text-amber-700 flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-800">
+            التعديلات تُحفظ كملاحظة على Shopify وفي نظام XENO. يُستخدم للتواصل مع فريق التنفيذ فقط — لا يُعدّل الطلب المالي على Shopify.
+          </p>
+        </div>
+
+        {/* Current items */}
+        <div>
+          <label className="block text-xs font-semibold text-[var(--text-secondary)] mb-2">المنتجات الحالية</label>
+          <div className="space-y-2">
+            {items.map((item) => (
+              <div key={item.id} className="flex items-center gap-2 bg-[var(--bg-base)] rounded-[var(--radius-md)] px-3 py-2">
+                <div className="flex-1 min-w-0">
+                  <span className="text-xs font-medium text-[var(--text-primary)] truncate block">
+                    {item.productName}{item.variant ? ` — ${item.variant}` : ""}
+                  </span>
+                  {item.sku && <span className="text-[10px] text-[var(--text-muted)] font-mono">{item.sku}</span>}
+                </div>
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <label className="text-[10px] text-[var(--text-muted)]">×</label>
+                  <input type="number" min={1} value={item.quantity}
+                    onChange={(e) => update(item.id, "quantity", parseInt(e.target.value) || 1)}
+                    className="form-input w-14 text-center text-xs py-1 px-1" />
+                  <input type="number" min={0} value={item.price}
+                    onChange={(e) => update(item.id, "price", parseFloat(e.target.value) || 0)}
+                    className="form-input w-20 text-center text-xs py-1 px-1" dir="ltr" />
+                  <span className="text-[10px] text-[var(--text-muted)]">ج.م</span>
+                  <button onClick={() => remove(item.id)} className="text-[var(--danger)] hover:opacity-80 ml-1">
+                    <X size={13} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Add product */}
+        <div>
+          <label className="block text-xs font-semibold text-[var(--text-secondary)] mb-2">إضافة منتج</label>
+          <ProductPicker onSelect={addFromPicker} />
+        </div>
+
+        {/* Total */}
+        <div className="flex justify-between items-center pt-2 border-t border-[var(--border-subtle)]">
+          <span className="text-xs text-[var(--text-muted)]">الإجمالي الجديد</span>
+          <span className="text-sm font-bold text-[var(--primary)]" dir="ltr">{total.toLocaleString("en-US")} ج.م</span>
+        </div>
+
+        {/* Note */}
+        <div>
+          <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">ملاحظات الطلب</label>
+          <textarea value={note} onChange={(e) => setNote(e.target.value)}
+            className="form-input min-h-[60px] resize-none text-xs"
+            placeholder="ملاحظات على الطلب..." />
+        </div>
+      </div>
+    </Modal>
+  );
 }
 
 // ── Edit Modal ────────────────────────────────────────────────────────────────
@@ -342,9 +547,10 @@ interface OrderDetailsClientProps {
 }
 
 export function OrderDetailsClient({ order: initialOrder }: OrderDetailsClientProps) {
-  const [order,       setOrder]       = useState(initialOrder);
-  const [editOpen,    setEditOpen]    = useState(false);
-  const [shipOpen,    setShipOpen]    = useState(false);
+  const [order,          setOrder]          = useState(initialOrder);
+  const [editOpen,       setEditOpen]       = useState(false);
+  const [editItemsOpen,  setEditItemsOpen]  = useState(false);
+  const [shipOpen,       setShipOpen]       = useState(false);
 
   const st = STATUS_DISPLAY[order.status]  ?? { label: order.status,        variant: "neutral" as const };
   const pm = PAYMENT_DISPLAY[order.paymentStatus] ?? { label: order.paymentStatus, variant: "neutral" as const };
@@ -384,7 +590,11 @@ export function OrderDetailsClient({ order: initialOrder }: OrderDetailsClientPr
             )}
             <Button variant="secondary" size="sm" icon={<Edit2 size={14} />}
               onClick={() => setEditOpen(true)}>
-              تعديل
+              تعديل البيانات
+            </Button>
+            <Button variant="secondary" size="sm" icon={<ShoppingBag size={14} />}
+              onClick={() => setEditItemsOpen(true)}>
+              تعديل المنتجات
             </Button>
             <Button variant="secondary" size="sm" icon={<Printer size={14} />}
               onClick={() => window.open(`/dashboard/orders/${order.shopifyId}/label`, "_blank")}>
@@ -556,6 +766,11 @@ export function OrderDetailsClient({ order: initialOrder }: OrderDetailsClientPr
                 onClick={() => setEditOpen(true)}>
                 تعديل البيانات
               </Button>
+              <Button variant="secondary" className="w-full" size="sm"
+                icon={<ShoppingBag size={14} />}
+                onClick={() => setEditItemsOpen(true)}>
+                تعديل المنتجات
+              </Button>
               <a href={`https://wa.me/${order.customerPhone.replace(/[^0-9]/g, "")}`}
                 target="_blank" rel="noopener noreferrer"
                 className="w-full flex items-center justify-center gap-2 text-xs font-semibold text-[var(--text-secondary)] border border-[var(--border-color)] rounded-[var(--radius-md)] px-3 py-2 hover:bg-[var(--bg-base)] hover:text-[var(--primary)] transition-colors">
@@ -607,6 +822,24 @@ export function OrderDetailsClient({ order: initialOrder }: OrderDetailsClientPr
       {/* Modals */}
       <EditModal open={editOpen} order={order} onClose={() => setEditOpen(false)}
         onSaved={(updated) => setOrder(updated)} />
+      <EditItemsModal
+        open={editItemsOpen}
+        order={order}
+        onClose={() => setEditItemsOpen(false)}
+        onSaved={(items, note) => setOrder((o) => ({
+          ...o,
+          items: items.map((i) => ({
+            id:          i.id,
+            productName: i.productName,
+            variant:     i.variant,
+            sku:         i.sku,
+            quantity:    i.quantity,
+            price:       i.price,
+          })),
+          note,
+          total: items.reduce((s, i) => s + i.price * i.quantity, 0),
+        }))}
+      />
       <ShipModal open={shipOpen} order={order} onClose={() => setShipOpen(false)}
         onDone={(tracking) => setOrder((o) => ({ ...o, trackingNumber: tracking, shippingProvider: "J&T Express" }))} />
     </div>
