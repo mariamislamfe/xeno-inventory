@@ -10,8 +10,89 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Modal } from "@/components/ui/Modal";
 import type { XenoOrder } from "@/lib/shopify/orders";
 
+// ── Product Picker ─────────────────────────────────────────────────────
+interface ShopifyVariantSummary { id: number; title: string; sku: string; price: number }
+interface ShopifyProductSummary { id: number; name: string; image?: string | null; variants: ShopifyVariantSummary[] }
+
+function ProductPicker({ onSelect }: { onSelect: (title: string, variantTitle: string, sku: string, price: number, variantId: number) => void }) {
+  const [q,        setQ]        = useState("");
+  const [results,  setResults]  = useState<ShopifyProductSummary[]>([]);
+  const [loading,  setLoading]  = useState(false);
+  const [open,     setOpen]     = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout>>(null);
+
+  function search(val: string) {
+    setQ(val);
+    setOpen(true);
+    if (timer.current) clearTimeout(timer.current);
+    if (!val.trim()) { setResults([]); return; }
+    timer.current = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const res  = await fetch(`/api/shopify/products?q=${encodeURIComponent(val)}`);
+        const data = await res.json();
+        setResults((data.products ?? []).map((p: { id: number; name: string; image?: string | null; variants: ShopifyVariantSummary[] }) => p));
+      } catch { setResults([]); }
+      finally  { setLoading(false); }
+    }, 350);
+  }
+
+  function pick(p: ShopifyProductSummary, v: ShopifyVariantSummary) {
+    onSelect(p.name, v.title, v.sku, v.price, v.id);
+    setQ(""); setResults([]); setOpen(false);
+  }
+
+  return (
+    <div className="relative">
+      <input
+        value={q}
+        onChange={(e) => search(e.target.value)}
+        onFocus={() => q && setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 200)}
+        className="form-input text-xs"
+        placeholder="ابحث عن منتج من Shopify..."
+      />
+      {open && (q.trim() || loading) && (
+        <div className="absolute z-50 top-full right-0 left-0 mt-1 bg-[var(--bg-card)] border border-[var(--border-color)] rounded-[var(--radius-md)] shadow-xl max-h-64 overflow-y-auto">
+          {loading && (
+            <div className="flex items-center gap-2 p-3 text-xs text-[var(--text-muted)]">
+              <Loader2 size={12} className="animate-spin" />
+              جارٍ البحث...
+            </div>
+          )}
+          {!loading && results.length === 0 && (
+            <p className="p-3 text-xs text-[var(--text-muted)]">لم يُعثر على منتجات</p>
+          )}
+          {results.map((p) => (
+            <div key={p.id}>
+              <div className="px-3 py-1.5 text-[11px] font-bold text-[var(--text-muted)] bg-[var(--bg-base)] border-b border-[var(--border-subtle)]">
+                {p.name}
+              </div>
+              {p.variants.map((v) => (
+                <button
+                  key={v.id}
+                  onMouseDown={() => pick(p, v)}
+                  className="w-full text-right px-3 py-2 hover:bg-[var(--bg-base)] flex items-center justify-between gap-3 transition-colors"
+                >
+                  <span className="text-xs text-[var(--text-primary)]">
+                    {v.title ? `${p.name} — ${v.title}` : p.name}
+                    {v.sku && <span className="text-[var(--text-muted)] mr-1">· {v.sku}</span>}
+                  </span>
+                  <span className="text-xs font-bold text-[var(--primary)] flex-shrink-0" dir="ltr">
+                    {v.price.toLocaleString("en-US")} ج.م
+                  </span>
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Create Order Modal ─────────────────────────────────────────────────
-interface NewOrderItem { title: string; qty: number; price: number }
+interface NewOrderItem { title: string; variantId?: number; qty: number; price: number }
 
 function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (o: XenoOrder) => void }) {
   const [name,    setName]    = useState("");
@@ -20,13 +101,17 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
   const [city,    setCity]    = useState("");
   const [gov,     setGov]     = useState("");
   const [note,    setNote]    = useState("");
-  const [items,   setItems]   = useState<NewOrderItem[]>([{ title: "", qty: 1, price: 0 }]);
+  const [items,   setItems]   = useState<NewOrderItem[]>([]);
   const [saving,  setSaving]  = useState(false);
   const { success, error } = useToast();
 
-  function addItem()    { setItems((p) => [...p, { title: "", qty: 1, price: 0 }]); }
+  function addProductItem(title: string, variantTitle: string, sku: string, price: number, variantId: number) {
+    const displayTitle = variantTitle ? `${title} — ${variantTitle}` : title;
+    setItems((p) => [...p, { title: displayTitle, variantId, qty: 1, price }]);
+    void sku; // sku stored server-side via variantId
+  }
   function removeItem(i: number) { setItems((p) => p.filter((_, idx) => idx !== i)); }
-  function updateItem(i: number, field: keyof NewOrderItem, val: string | number) {
+  function updateItem(i: number, field: "qty" | "price", val: number) {
     setItems((p) => p.map((item, idx) => idx === i ? { ...item, [field]: val } : item));
   }
 
@@ -34,7 +119,7 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
 
   async function handleCreate() {
     if (!name || !phone || !address || !city) { error("بيانات ناقصة", "اسم العميل والهاتف والعنوان والمدينة مطلوبون"); return; }
-    if (items.some((i) => !i.title)) { error("بيانات ناقصة", "اكتب اسم كل منتج"); return; }
+    if (items.length === 0) { error("لا توجد منتجات", "أضف منتجاً واحداً على الأقل"); return; }
     setSaving(true);
     try {
       const res = await fetch("/api/shopify/orders", {
@@ -48,7 +133,7 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
       onCreated(data.order);
       onClose();
       setName(""); setPhone(""); setAddress(""); setCity(""); setGov(""); setNote("");
-      setItems([{ title: "", qty: 1, price: 0 }]);
+      setItems([]);
     } catch (err) {
       error("خطأ", String(err));
     } finally {
@@ -94,32 +179,45 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
 
         {/* Items */}
         <div>
-          <div className="flex items-center justify-between mb-2">
-            <label className="text-xs font-semibold text-[var(--text-secondary)]">المنتجات *</label>
-            <button onClick={addItem} className="text-xs text-[var(--primary)] hover:opacity-80 flex items-center gap-1">
-              <Plus size={12} />إضافة منتج
-            </button>
-          </div>
-          <div className="space-y-2">
-            {items.map((item, i) => (
-              <div key={i} className="grid grid-cols-12 gap-2 items-center">
-                <input value={item.title} onChange={(e) => updateItem(i, "title", e.target.value)}
-                  className="form-input col-span-6" placeholder="اسم المنتج" />
-                <input type="number" min={1} value={item.qty} onChange={(e) => updateItem(i, "qty", parseInt(e.target.value) || 1)}
-                  className="form-input col-span-2 text-center" placeholder="كمية" />
-                <input type="number" min={0} value={item.price} onChange={(e) => updateItem(i, "price", parseFloat(e.target.value) || 0)}
-                  className="form-input col-span-3 text-center" placeholder="السعر" dir="ltr" />
-                {items.length > 1 && (
-                  <button onClick={() => removeItem(i)} className="col-span-1 text-[var(--danger)] hover:opacity-80 flex justify-center">
-                    <X size={14} />
-                  </button>
-                )}
+          <label className="block text-xs font-semibold text-[var(--text-secondary)] mb-2">المنتجات *</label>
+          {/* Product search */}
+          <ProductPicker onSelect={addProductItem} />
+
+          {/* Selected items */}
+          {items.length > 0 && (
+            <div className="mt-3 space-y-2">
+              {items.map((item, i) => (
+                <div key={i} className="flex items-center gap-2 bg-[var(--bg-base)] rounded-[var(--radius-md)] px-3 py-2">
+                  <span className="flex-1 text-xs text-[var(--text-primary)] truncate">{item.title}</span>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <label className="text-[10px] text-[var(--text-muted)]">كمية</label>
+                    <input type="number" min={1} value={item.qty}
+                      onChange={(e) => updateItem(i, "qty", parseInt(e.target.value) || 1)}
+                      className="form-input w-14 text-center text-xs py-1 px-1" />
+                    <label className="text-[10px] text-[var(--text-muted)]">سعر</label>
+                    <input type="number" min={0} value={item.price}
+                      onChange={(e) => updateItem(i, "price", parseFloat(e.target.value) || 0)}
+                      className="form-input w-20 text-center text-xs py-1 px-1" dir="ltr" />
+                    <span className="text-[10px] text-[var(--text-muted)]">ج.م</span>
+                    <button onClick={() => removeItem(i)} className="text-[var(--danger)] hover:opacity-80 mr-1">
+                      <X size={13} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+              <div className="text-left pt-1">
+                <span className="text-xs font-bold text-[var(--primary)]" dir="ltr">
+                  الإجمالي: {total.toLocaleString("en-US")} ج.م
+                </span>
               </div>
-            ))}
-          </div>
-          <div className="text-left mt-2">
-            <span className="text-xs font-bold text-[var(--primary)]" dir="ltr">الإجمالي: {total.toLocaleString("en-US")} ج.م</span>
-          </div>
+            </div>
+          )}
+
+          {items.length === 0 && (
+            <p className="text-xs text-[var(--text-muted)] mt-2 text-center py-3 border border-dashed border-[var(--border-color)] rounded-[var(--radius-md)]">
+              ابحث عن المنتج وانقر على المتغير لإضافته
+            </p>
+          )}
         </div>
 
         {/* Note */}

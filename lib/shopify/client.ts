@@ -4,13 +4,13 @@ const VERSION = process.env.SHOPIFY_API_VERSION ?? "2026-07";
 
 const BASE = `https://${SHOP}/admin/api/${VERSION}`;
 
-export async function shopifyFetch<T>(endpoint: string): Promise<T> {
+export async function shopifyFetch<T>(endpoint: string, options?: { revalidate?: number }): Promise<T> {
   const res = await fetch(`${BASE}${endpoint}`, {
     headers: {
       "X-Shopify-Access-Token": TOKEN,
       "Content-Type": "application/json",
     },
-    next: { revalidate: 60 }, // cache 60s — swap to 0 for real-time
+    next: { revalidate: options?.revalidate ?? 0 },
   });
 
   if (!res.ok) {

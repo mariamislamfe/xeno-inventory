@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { shopifyFetch, shopifyPost } from "@/lib/shopify/client";
 
-const APP_URL = "https://xeno-inventory.vercel.app";
+const APP_URL =
+  process.env.NEXT_PUBLIC_APP_URL ??
+  (process.env.VERCEL_URL
+    ? `https://${process.env.VERCEL_URL}`
+    : "https://xeno-inventory.vercel.app");
 
 const TOPICS = [
   "orders/create",

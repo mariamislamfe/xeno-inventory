@@ -158,7 +158,10 @@ export interface InventoryItem {
   category: string;
   currentStock: number;
   minStock: number;
-  maxStock: number;
+  maxStock?: number;
+  unitCost?: number;
+  unitPrice?: number;
+  totalValue?: number;
   status: InventoryStatus;
   lastUpdated: string;
   location?: string;

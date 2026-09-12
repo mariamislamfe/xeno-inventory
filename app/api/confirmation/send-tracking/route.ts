@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
   if (shopify_order_id) {
     await supabaseAdmin
       .from("shipments")
-      .update({ tracking_number, status: "shipped" })
+      .update({ tracking_number, status: "picked_up" })
       .eq("shopify_order_id", shopify_order_id);
   }
 
