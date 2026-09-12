@@ -1,13 +1,137 @@
 "use client";
 
-import React, { useState, useCallback, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { RefreshCw, Eye, Printer, Truck, Loader2, Search, ChevronDown, Tag, X } from "lucide-react";
+import { RefreshCw, Eye, Printer, Truck, Loader2, Search, ChevronDown, Tag, X, Plus, Save } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { Modal } from "@/components/ui/Modal";
 import type { XenoOrder } from "@/lib/shopify/orders";
+
+// ── Create Order Modal ─────────────────────────────────────────────────
+interface NewOrderItem { title: string; qty: number; price: number }
+
+function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (o: XenoOrder) => void }) {
+  const [name,    setName]    = useState("");
+  const [phone,   setPhone]   = useState("");
+  const [address, setAddress] = useState("");
+  const [city,    setCity]    = useState("");
+  const [gov,     setGov]     = useState("");
+  const [note,    setNote]    = useState("");
+  const [items,   setItems]   = useState<NewOrderItem[]>([{ title: "", qty: 1, price: 0 }]);
+  const [saving,  setSaving]  = useState(false);
+  const { success, error } = useToast();
+
+  function addItem()    { setItems((p) => [...p, { title: "", qty: 1, price: 0 }]); }
+  function removeItem(i: number) { setItems((p) => p.filter((_, idx) => idx !== i)); }
+  function updateItem(i: number, field: keyof NewOrderItem, val: string | number) {
+    setItems((p) => p.map((item, idx) => idx === i ? { ...item, [field]: val } : item));
+  }
+
+  const total = items.reduce((s, i) => s + i.price * i.qty, 0);
+
+  async function handleCreate() {
+    if (!name || !phone || !address || !city) { error("بيانات ناقصة", "اسم العميل والهاتف والعنوان والمدينة مطلوبون"); return; }
+    if (items.some((i) => !i.title)) { error("بيانات ناقصة", "اكتب اسم كل منتج"); return; }
+    setSaving(true);
+    try {
+      const res = await fetch("/api/shopify/orders", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ customerName: name, phone, address1: address, city, province: gov, note, items, total }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error ?? "فشل إنشاء الطلب");
+      success("تم إنشاء الطلب", `رقم الطلب: ${data.order.orderNumber}`);
+      onCreated(data.order);
+      onClose();
+      setName(""); setPhone(""); setAddress(""); setCity(""); setGov(""); setNote("");
+      setItems([{ title: "", qty: 1, price: 0 }]);
+    } catch (err) {
+      error("خطأ", String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal open={open} onClose={saving ? () => {} : onClose} title="إنشاء طلب جديد" size="lg"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={saving}>إلغاء</Button>
+          <Button variant="primary" onClick={handleCreate} loading={saving} icon={<Save size={14} />}>
+            إنشاء الطلب على Shopify
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        {/* Customer */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">اسم العميل *</label>
+            <input value={name} onChange={(e) => setName(e.target.value)} className="form-input" placeholder="الاسم الكامل" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">رقم الهاتف *</label>
+            <input value={phone} onChange={(e) => setPhone(e.target.value)} className="form-input" dir="ltr" placeholder="01xxxxxxxxx" />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">العنوان *</label>
+            <input value={address} onChange={(e) => setAddress(e.target.value)} className="form-input" placeholder="الشارع / المنطقة" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">المدينة *</label>
+            <input value={city} onChange={(e) => setCity(e.target.value)} className="form-input" placeholder="القاهرة" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">المحافظة</label>
+            <input value={gov} onChange={(e) => setGov(e.target.value)} className="form-input" placeholder="القاهرة" />
+          </div>
+        </div>
+
+        {/* Items */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-xs font-semibold text-[var(--text-secondary)]">المنتجات *</label>
+            <button onClick={addItem} className="text-xs text-[var(--primary)] hover:opacity-80 flex items-center gap-1">
+              <Plus size={12} />إضافة منتج
+            </button>
+          </div>
+          <div className="space-y-2">
+            {items.map((item, i) => (
+              <div key={i} className="grid grid-cols-12 gap-2 items-center">
+                <input value={item.title} onChange={(e) => updateItem(i, "title", e.target.value)}
+                  className="form-input col-span-6" placeholder="اسم المنتج" />
+                <input type="number" min={1} value={item.qty} onChange={(e) => updateItem(i, "qty", parseInt(e.target.value) || 1)}
+                  className="form-input col-span-2 text-center" placeholder="كمية" />
+                <input type="number" min={0} value={item.price} onChange={(e) => updateItem(i, "price", parseFloat(e.target.value) || 0)}
+                  className="form-input col-span-3 text-center" placeholder="السعر" dir="ltr" />
+                {items.length > 1 && (
+                  <button onClick={() => removeItem(i)} className="col-span-1 text-[var(--danger)] hover:opacity-80 flex justify-center">
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="text-left mt-2">
+            <span className="text-xs font-bold text-[var(--primary)]" dir="ltr">الإجمالي: {total.toLocaleString("en-US")} ج.م</span>
+          </div>
+        </div>
+
+        {/* Note */}
+        <div>
+          <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">ملاحظات</label>
+          <textarea value={note} onChange={(e) => setNote(e.target.value)}
+            className="form-input min-h-[60px] resize-none" placeholder="ملاحظات اختيارية..." />
+        </div>
+      </div>
+    </Modal>
+  );
+}
 
 // ── Status display ─────────────────────────────────────────────────────
 const STATUS_DISPLAY: Record<string, { label: string; variant: "success" | "warning" | "danger" | "info" | "neutral" }> = {
@@ -90,6 +214,7 @@ export default function OrdersPage() {
   const [searchInput,  setSearchInput]  = useState("");
   const [tagFilter,    setTagFilter]    = useState("");
   const [totalCount,   setTotalCount]   = useState<number | null>(null);
+  const [createOpen,   setCreateOpen]   = useState(false);
   const searchTimer = useRef<ReturnType<typeof setTimeout>>(null);
   const { error } = useToast();
 
@@ -168,15 +293,31 @@ export default function OrdersPage() {
               : `${orders.length} طلب`}
           </p>
         </div>
-        <Button
-          variant="secondary" size="sm"
-          icon={loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={14} />}
-          onClick={() => { setOrders([]); setNextPageInfo(null); loadOrders(activeTab, search, tagFilter); fetchCount(activeTab); }}
-          disabled={loading}
-        >
-          تحديث
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="primary" size="sm"
+            icon={<Plus size={13} />}
+            onClick={() => setCreateOpen(true)}
+          >
+            طلب جديد
+          </Button>
+          <Button
+            variant="secondary" size="sm"
+            icon={loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={14} />}
+            onClick={() => { setOrders([]); setNextPageInfo(null); loadOrders(activeTab, search, tagFilter); fetchCount(activeTab); }}
+            disabled={loading}
+          >
+            تحديث
+          </Button>
+        </div>
       </div>
+
+      {/* Create Order Modal */}
+      <CreateOrderModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={(newOrder) => { setOrders((prev) => [newOrder, ...prev]); setTotalCount((c) => (c ?? 0) + 1); }}
+      />
 
       {/* Filter Tabs */}
       <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
