@@ -32,6 +32,10 @@ function headerDigest(bizContent: string) {
 // ── Generic J&T request ───────────────────────────────────────────────────────
 
 async function jtPost(path: string, bizParams: Record<string, unknown>) {
+  if (!API_ACCOUNT)    throw new Error("JT_API_ACCOUNT env var is missing");
+  if (!CUSTOMER_CODE)  throw new Error("JT_CUSTOMER_CODE env var is missing");
+  if (!BASE_URL)       throw new Error("JT_BASE_URL env var is missing");
+
   const bizContent = JSON.stringify(bizParams);
 
   const payload = {

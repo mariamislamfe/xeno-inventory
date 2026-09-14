@@ -1,25 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getShopifyProducts } from "@/lib/shopify/products";
-import { shopifyFetch } from "@/lib/shopify/client";
+import { getAllShopifyProducts } from "@/lib/shopify/products";
 import type { XenoProduct } from "@/lib/shopify/products";
-import { normalizeProduct } from "@/lib/shopify/products";
 
 export const revalidate = 0;
 
 export async function GET(req: NextRequest) {
-  const q = req.nextUrl.searchParams.get("q") ?? "";
+  const q = req.nextUrl.searchParams.get("q")?.trim() ?? "";
   try {
+    // Always fetch all active products, then filter locally.
+    // Shopify REST title= does exact match only — local filter handles partial/Arabic search.
+    const all = await getAllShopifyProducts();
+
     let products: XenoProduct[];
     if (q) {
-      // Shopify title search
-      /* eslint-disable @typescript-eslint/no-explicit-any */
-      const data = await shopifyFetch<{ products: any[] }>(
-        `/products.json?limit=50&status=active&title=${encodeURIComponent(q)}`
+      const lower = q.toLowerCase();
+      products = all.filter(
+        (p) =>
+          p.name.toLowerCase().includes(lower) ||
+          p.sku.toLowerCase().includes(lower) ||
+          p.category.toLowerCase().includes(lower),
       );
-      products = data.products.map(normalizeProduct);
     } else {
-      products = await getShopifyProducts(100);
+      products = all;
     }
+
     return NextResponse.json({ products, count: products.length });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });

@@ -401,7 +401,13 @@ function UserProfile() {
               <User size={14} />
               الملف الشخصي
             </Link>
-            <button className="w-full flex items-center gap-3 px-4 py-2 text-sm text-[var(--danger)] hover:bg-[var(--danger-light)] transition-colors">
+            <button
+              className="w-full flex items-center gap-3 px-4 py-2 text-sm text-[var(--danger)] hover:bg-[var(--danger-light)] transition-colors"
+              onClick={async () => {
+                await fetch("/api/auth", { method: "DELETE" });
+                window.location.href = "/login";
+              }}
+            >
               <LogOut size={14} />
               تسجيل الخروج
             </button>

@@ -61,36 +61,32 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ ok: true });
 }
 
-async function addShopifyNote(shopifyOrderId: number | string, note: string) {
+async function addShopifyNote(shopifyOrderId: number | string, newNote: string) {
   const shop    = process.env.SHOPIFY_SHOP;
   const token   = process.env.SHOPIFY_ACCESS_TOKEN;
   const version = process.env.SHOPIFY_API_VERSION ?? "2026-07";
   if (!shop || !token || !shopifyOrderId) return;
 
   try {
-    await fetch(
-      `https://${shop}/admin/api/${version}/orders/${shopifyOrderId}/metafields.json`,
-      {
-        method:  "POST",
-        headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
-        body:    JSON.stringify({
-          metafield: {
-            namespace: "xeno_wa",
-            key:       "last_status",
-            value:     note,
-            type:      "single_line_text_field",
-          },
-        }),
-      }
+    // FIX: fetch existing note first and APPEND, not overwrite
+    const getRes = await fetch(
+      `https://${shop}/admin/api/${version}/orders/${shopifyOrderId}.json?fields=id,note`,
+      { headers: { "X-Shopify-Access-Token": token }, cache: "no-store" }
     );
+    const existingNote: string = getRes.ok
+      ? ((await getRes.json())?.order?.note ?? "")
+      : "";
 
-    // Also add to order notes via order update
+    const combinedNote = existingNote
+      ? `${existingNote}\n---\n${newNote}`
+      : newNote;
+
     await fetch(
       `https://${shop}/admin/api/${version}/orders/${shopifyOrderId}.json`,
       {
         method:  "PUT",
         headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
-        body:    JSON.stringify({ order: { id: shopifyOrderId, note } }),
+        body:    JSON.stringify({ order: { id: shopifyOrderId, note: combinedNote } }),
       }
     );
   } catch (e) {
