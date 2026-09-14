@@ -8,6 +8,7 @@ function isPublic(pathname: string): boolean {
   return (
     pathname === LOGIN_PATH ||
     pathname.startsWith("/api/auth") ||
+    pathname.startsWith("/api/shopify/callback") ||
     pathname.startsWith("/api/webhooks/") ||
     pathname.startsWith("/_next/") ||
     pathname.startsWith("/favicon")
