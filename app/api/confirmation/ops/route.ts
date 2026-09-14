@@ -37,18 +37,26 @@ export async function POST(req: NextRequest) {
     customer_name?:   string;
     phone?:           string;
     total?:           number;
-    op_status:        OpStatus;
+    op_status?:       OpStatus;   // optional — if omitted, existing status is kept
     postponed_until?: string | null;
     inquiry_type?:    string | null;
     internal_note?:   string | null;
+    items_override?:  { name: string; qty: number }[] | null;
   };
+
+  // Build upsert payload — only include op_status if explicitly provided
+  // so editing items doesn't accidentally overwrite the confirmation status
+  const upsertData: Record<string, unknown> = {
+    ...body,
+    updated_at: new Date().toISOString(),
+  };
+  if (body.op_status === undefined) {
+    delete upsertData.op_status;
+  }
 
   const { data, error } = await supabaseAdmin
     .from("xeno_ops")
-    .upsert(
-      { ...body, updated_at: new Date().toISOString() },
-      { onConflict: "shopify_order_id" }
-    )
+    .upsert(upsertData, { onConflict: "shopify_order_id" })
     .select()
     .single();
 

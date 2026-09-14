@@ -142,13 +142,12 @@ function EditItemsModal({ open, order, onClose, onSaved }: EditItemsModalProps) 
     if (items.length === 0) { error("لا توجد منتجات", "أضف منتجاً واحداً على الأقل"); return; }
     setSaving(true);
     try {
-      // Build change summary for Shopify note
       const originalNames = order.items.map((i) => `${i.productName}${i.variant ? ` (${i.variant})` : ""} ×${i.quantity}`).join("، ");
       const newNames      = items.map((i) => `${i.productName}${i.variant ? ` (${i.variant})` : ""} ×${i.quantity}`).join("، ");
       const changeNote    = `[تعديل يدوي] الأصل: ${originalNames} | بعد التعديل: ${newNames}`;
       const fullNote      = note ? `${note}\n${changeNote}` : changeNote;
 
-      // Save override in xeno_ops + update note in Shopify
+      // 1. Save items_override + note (always — J&T uses this)
       await Promise.all([
         fetch(`/api/shopify/orders/${order.shopifyId}`, {
           method:  "PUT",
@@ -164,13 +163,41 @@ function EditItemsModal({ open, order, onClose, onSaved }: EditItemsModalProps) 
             customer_name:    order.customerName,
             phone:            order.customerPhone,
             total,
-            op_status:        "confirmed",
+            // no op_status — editing items must NOT change the confirmation status
             internal_note:    changeNote,
+            items_override:   items.map((i) => ({ name: `${i.productName}${i.variant ? ` (${i.variant})` : ""}`, qty: i.quantity })),
           }),
         }),
       ]);
 
-      success("تم حفظ التعديلات", "تم تحديث ملاحظة الطلب على Shopify");
+      // 2. Update Shopify order items via GraphQL (best-effort)
+      const gqlRes = await fetch(`/api/shopify/orders/${order.shopifyId}/edit`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({
+          items: items.map((i) => ({
+            id:        i.id,
+            name:      `${i.productName}${i.variant ? ` (${i.variant})` : ""}`,
+            qty:       i.quantity,
+            price:     i.price,
+            variantId: i.variantId,
+          })),
+          originalItems: order.items.map((i) => ({ id: i.id, quantity: i.quantity })),
+          staffNote: changeNote,
+        }),
+      });
+
+      if (gqlRes.ok) {
+        success("تم حفظ التعديلات", "تم تعديل الطلب على Shopify ✓");
+      } else {
+        const gqlData = await gqlRes.json() as { error?: string };
+        // Local save succeeded — warn about Shopify
+        success(
+          "تم الحفظ محلياً",
+          `لم يُحدَّث Shopify: ${gqlData.error ?? "خطأ غير معروف"}. تحقق من صلاحية write_order_edits.`,
+        );
+      }
+
       onSaved(items, fullNote);
       onClose();
     } catch (err) {
@@ -196,7 +223,7 @@ function EditItemsModal({ open, order, onClose, onSaved }: EditItemsModalProps) 
         <div className="bg-amber-50 border border-amber-200 rounded-[var(--radius-md)] p-3 flex items-start gap-2">
           <AlertCircle size={14} className="text-amber-700 flex-shrink-0 mt-0.5" />
           <p className="text-xs text-amber-800">
-            التعديلات تُحفظ كملاحظة على Shopify وفي نظام XENO. يُستخدم للتواصل مع فريق التنفيذ فقط — لا يُعدّل الطلب المالي على Shopify.
+            التعديلات تُحفظ في XENO وتُرسل لـ Shopify عبر GraphQL API. يلزم صلاحية <span className="font-mono font-semibold">write_order_edits</span> في إعدادات الـ app — إن لم تتوفر تُحفظ محلياً فقط.
           </p>
         </div>
 
@@ -270,6 +297,17 @@ function EditModal({ open, order, onClose, onSaved }: EditModalProps) {
   const [note,     setNote]     = useState(order.note ?? "");
   const [saving,   setSaving]   = useState(false);
   const { success, error } = useToast();
+
+  // Sync fields from latest order state every time the modal opens
+  React.useEffect(() => {
+    if (open) {
+      setPhone(order.customerPhone);
+      setAddress(order.address);
+      setCity(order.city);
+      setGov(order.governorate);
+      setNote(order.note ?? "");
+    }
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleSave() {
     setSaving(true);

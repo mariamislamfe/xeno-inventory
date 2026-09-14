@@ -10,26 +10,57 @@ export async function POST(req: NextRequest) {
   const results = [];
 
   for (const o of orders) {
-    // Fetch full order from Shopify to get address + items
+    // FIX-4: Check for existing shipment with a tracking number — prevents double-shipping
+    const { data: existing } = await supabaseAdmin
+      .from("shipments")
+      .select("tracking_number, status")
+      .eq("shopify_order_id", o.shopify_order_id)
+      .not("tracking_number", "is", null)
+      .maybeSingle();
+
+    if (existing?.tracking_number) {
+      results.push({
+        order_number:   o.order_number,
+        ok:             true,
+        trackingNumber: existing.tracking_number,
+        error:          undefined,
+        skipped:        true,
+      });
+      continue;
+    }
+
+    // FIX-2: Fetch full order from Shopify to get FRESH address, phone, name, and items
     const shopifyOrder = await fetchShopifyOrder(o.shopify_order_id);
+
+    // FIX-5: Check xeno_ops for items_override (employee-edited items)
+    const { data: xenoOp } = await supabaseAdmin
+      .from("xeno_ops")
+      .select("items_override")
+      .eq("shopify_order_id", o.shopify_order_id)
+      .maybeSingle();
+
+    const itemsToShip = xenoOp?.items_override
+      ?? shopifyOrder?.items
+      ?? [{ name: "منتج", qty: 1 }];
 
     const jtResult = await createJTOrder({
       orderNumber:  o.order_number,
-      customerName: o.customer_name,
-      phone:        o.phone,
-      address:      shopifyOrder?.address1 ?? o.address ?? "",
-      city:         shopifyOrder?.city     ?? o.city     ?? "",
-      governorate:  shopifyOrder?.province ?? o.governorate ?? "",
-      items:        shopifyOrder?.items    ?? [{ name: "منتج", qty: 1 }],
-      totalAmount:  shopifyOrder?.total    ?? o.total    ?? 0,
+      // FIX-2: Use fresh Shopify data for customer name and phone
+      customerName: shopifyOrder?.customerName ?? o.customer_name,
+      phone:        shopifyOrder?.phone        ?? o.phone,
+      address:      shopifyOrder?.address1     ?? o.address     ?? "",
+      city:         shopifyOrder?.city         ?? o.city        ?? "",
+      governorate:  shopifyOrder?.province     ?? o.governorate ?? "",
+      items:        itemsToShip,
+      totalAmount:  shopifyOrder?.total        ?? o.total       ?? 0,
     });
 
-    // Save shipment record
+    // Save shipment record (UNIQUE constraint on shopify_order_id prevents duplicates)
     await supabaseAdmin.from("shipments").upsert({
       shopify_order_id: o.shopify_order_id,
       order_number:     o.order_number,
-      customer_name:    o.customer_name,
-      phone:            o.phone,
+      customer_name:    shopifyOrder?.customerName ?? o.customer_name,
+      phone:            shopifyOrder?.phone        ?? o.phone,
       provider:         "J&T Express",
       status:           jtResult.ok && jtResult.trackingNumber ? "picked_up" : "pending",
       tracking_number:  jtResult.trackingNumber ?? null,
@@ -37,7 +68,11 @@ export async function POST(req: NextRequest) {
 
     // If we got a tracking number, send WhatsApp message
     if (jtResult.ok && jtResult.trackingNumber) {
-      await sendTrackingWA(o.phone, o.customer_name, jtResult.trackingNumber);
+      await sendTrackingWA(
+        shopifyOrder?.phone ?? o.phone,
+        shopifyOrder?.customerName ?? o.customer_name,
+        jtResult.trackingNumber,
+      );
     }
 
     results.push({
@@ -45,13 +80,14 @@ export async function POST(req: NextRequest) {
       ok:             jtResult.ok,
       trackingNumber: jtResult.trackingNumber,
       error:          jtResult.error,
+      skipped:        false,
     });
   }
 
   await supabaseAdmin.from("activity_log").insert({
     type:      "shipment",
     action:    "bulk_create",
-    detail:    `J&T: ${results.filter(r => r.ok).length} شُحن، ${results.filter(r => !r.ok).length} فشل`,
+    detail:    `J&T: ${results.filter(r => r.ok).length} شُحن، ${results.filter(r => !r.ok && !r.skipped).length} فشل`,
     user_name: "النظام",
     metadata:  { results },
   });
@@ -60,7 +96,7 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     ok:     successCount > 0,
     count:  successCount,
-    failed: results.filter(r => !r.ok).length,
+    failed: results.filter(r => !r.ok && !r.skipped).length,
     results,
   });
 }
@@ -83,12 +119,18 @@ async function fetchShopifyOrder(shopifyOrderId: number) {
     if (!ord) return null;
 
     const addr = ord.shipping_address;
+    // FIX-2: Include phone and customer name from shipping address
+    const firstName = addr?.first_name ?? "";
+    const lastName  = addr?.last_name  ?? "";
+
     return {
-      address1: addr?.address1 ?? "",
-      city:     addr?.city     ?? "",
-      province: addr?.province ?? addr?.city ?? "",
-      total:    parseFloat(ord.total_price ?? "0"),
-      items:    (ord.line_items ?? []).map((li: { title: string; quantity: number }) => ({
+      address1:     addr?.address1 ?? "",
+      city:         addr?.city     ?? "",
+      province:     addr?.province ?? addr?.city ?? "",
+      phone:        addr?.phone    ?? "",
+      customerName: `${firstName} ${lastName}`.trim() || "",
+      total:        parseFloat(ord.total_price ?? "0"),
+      items:        (ord.line_items ?? []).map((li: { title: string; quantity: number }) => ({
         name: li.title,
         qty:  li.quantity,
       })),

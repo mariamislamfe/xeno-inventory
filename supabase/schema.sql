@@ -60,7 +60,7 @@ CREATE INDEX IF NOT EXISTS idx_wa_status   ON whatsapp_messages (status);
 -- ── 4. Shipments (supplement Shopify fulfillments) ───────────
 CREATE TABLE IF NOT EXISTS shipments (
   id               UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  shopify_order_id BIGINT NOT NULL,
+  shopify_order_id BIGINT NOT NULL UNIQUE,
   order_number     TEXT NOT NULL,
   tracking_number  TEXT,
   provider         TEXT DEFAULT 'J&T Express',

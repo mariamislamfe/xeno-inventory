@@ -18,7 +18,10 @@ export async function GET(req: NextRequest) {
       .range(offset, offset + limit - 1);
 
     if (type)   query = query.eq("type", type);
-    if (search) query = query.or(`action.ilike.%${search}%,detail.ilike.%${search}%,user_name.ilike.%${search}%`);
+    if (search) {
+      const safe = search.replace(/[%_\\]/g, "\\$&");
+      query = query.or(`action.ilike.%${safe}%,detail.ilike.%${safe}%,user_name.ilike.%${safe}%`);
+    }
 
     const { data, error, count } = await query;
 
