@@ -56,20 +56,24 @@ export async function GET() {
 
     // J&T returns code "1" for success, other codes for errors
     // Even a "not found" response means the API is reachable and credentials are accepted
+    const sentPayload = {
+      customerCode: CUSTOMER_CODE ? `${CUSTOMER_CODE.slice(0,3)}...` : "EMPTY",
+      apiAccount:   API_ACCOUNT   ? `${API_ACCOUNT.slice(0,5)}...` : "EMPTY",
+      privateKey:   PRIVATE_KEY   ? `${PRIVATE_KEY.slice(0,5)}...` : "EMPTY",
+      uuid:         UUID          ? `${UUID.slice(0,5)}...`        : "EMPTY",
+    };
+
     if (res.ok) {
-      // If code is not an auth error, consider it connected
-      const code = String(data?.code ?? "");
-      if (code === "401" || code === "403" || data?.message?.includes("auth") || data?.message?.includes("sign")) {
-        return NextResponse.json({ ok: false, error: `خطأ في بيانات الاعتماد: ${data?.message ?? code}`, raw: data });
-      }
       return NextResponse.json({
-        ok: true,
-        message: `J&T API يعمل — استجابة: ${data?.message ?? data?.code ?? "OK"}`,
-        raw: data,
+        ok:          data?.code === "1" || data?.code === 1,
+        jtCode:      data?.code,
+        jtMsg:       data?.msg ?? data?.message,
+        raw:         data,
+        sentPayload,
       });
     }
 
-    return NextResponse.json({ ok: false, error: `HTTP ${res.status}`, raw: data }, { status: res.status });
+    return NextResponse.json({ ok: false, error: `HTTP ${res.status}`, raw: data, sentPayload }, { status: res.status });
   } catch (err) {
     return NextResponse.json({ ok: false, error: String(err) }, { status: 500 });
   }
