@@ -66,6 +66,36 @@ export async function GET(req: NextRequest) {
   }
 }
 
+async function resolveCustomerId(shop: string, token: string, version: string, firstName: string, lastName: string, rawPhone: string): Promise<number | null> {
+  const digits = rawPhone.replace(/[^0-9]/g, "");
+  const e164   = digits.startsWith("0") ? `+20${digits.slice(1)}` : `+${digits}`;
+
+  try {
+    const r = await fetch(
+      `https://${shop}/admin/api/${version}/customers/search.json?query=phone:${encodeURIComponent(e164)}&limit=1`,
+      { headers: { "X-Shopify-Access-Token": token } },
+    );
+    if (r.ok) {
+      const d = await r.json() as { customers: { id: number }[] };
+      if (d.customers.length > 0) return d.customers[0].id;
+    }
+  } catch { /* ignore */ }
+
+  try {
+    const r = await fetch(`https://${shop}/admin/api/${version}/customers.json`, {
+      method:  "POST",
+      headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
+      body:    JSON.stringify({ customer: { first_name: firstName, last_name: lastName || undefined, phone: e164, verified_email: false, accepts_marketing: false } }),
+    });
+    if (r.ok) {
+      const d = await r.json() as { customer: { id: number } };
+      return d.customer.id;
+    }
+  } catch { /* ignore */ }
+
+  return null;
+}
+
 // ── POST /api/shopify/orders — Create a new order (COD) ──────────────────────
 // Body: { customerName, phone, address1, city, province, note?, items: [{variantId,qty,price,title}], total }
 export async function POST(req: NextRequest) {
@@ -87,12 +117,15 @@ export async function POST(req: NextRequest) {
     const firstName   = nameParts[0] ?? customerName;
     const lastName    = nameParts.slice(1).join(" ") || "";
 
-    const shopifyOrder = {
+    const customerId  = await resolveCustomerId(SHOP, TOKEN, VERSION, firstName, lastName, phone);
+
+    const shopifyOrder: Record<string, unknown> = {
       financial_status: "pending",
       send_receipt:     false,
       send_fulfillment_receipt: false,
       note:             note ?? "",
       tags:             "xeno_manual",
+      ...(customerId ? { customer: { id: customerId } } : {}),
       shipping_address: {
         first_name: firstName,
         last_name:  lastName,
