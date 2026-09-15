@@ -1,8 +1,8 @@
 import { shopifyGraphQL } from "./client";
 
-function toOrderGid(id: number | string)     { return `gid://shopify/Order/${id}`; }
-function toLineItemGid(id: number | string)  { return `gid://shopify/LineItem/${id}`; }
-function toVariantGid(id: number | string)   { return `gid://shopify/ProductVariant/${id}`; }
+function toOrderGid(id: number | string)           { return `gid://shopify/Order/${id}`; }
+function toCalcLineItemGid(id: number | string)    { return `gid://shopify/CalculatedLineItem/${id}`; }
+function toVariantGid(id: number | string)         { return `gid://shopify/ProductVariant/${id}`; }
 
 export interface EditItemInput {
   id: string;          // REST line item id string, OR "new-xxx" for new items
@@ -56,24 +56,16 @@ export async function editShopifyOrderItems(
   try {
     const orderGid = toOrderGid(shopifyOrderId);
 
-    // Step 1 — Begin edit session, fetching CalculatedLineItem IDs
+    // Step 1 — Begin edit session
     const beginData = await shopifyGraphQL<{
       orderEditBegin: {
-        calculatedOrder: {
-          id: string;
-          lineItems: { edges: { node: { id: string; lineItem: { id: string } } }[] };
-        } | null;
+        calculatedOrder: { id: string } | null;
         userErrors: UserError[];
       };
     }>(
       `mutation orderEditBegin($id: ID!) {
         orderEditBegin(id: $id) {
-          calculatedOrder {
-            id
-            lineItems(first: 100) {
-              edges { node { id lineItem { id } } }
-            }
-          }
+          calculatedOrder { id }
           userErrors { field message }
         }
       }`,
@@ -81,15 +73,8 @@ export async function editShopifyOrderItems(
     );
 
     checkErrors(beginData.orderEditBegin.userErrors, "orderEditBegin");
-    const calcOrder = beginData.orderEditBegin.calculatedOrder;
-    if (!calcOrder) throw new Error("orderEditBegin returned no calculatedOrder");
-    const calcId = calcOrder.id;
-
-    // Map original LineItem GID → CalculatedLineItem GID
-    const calcLineItemMap = new Map<string, string>();
-    for (const edge of calcOrder.lineItems.edges) {
-      calcLineItemMap.set(edge.node.lineItem.id, edge.node.id);
-    }
+    const calcId = beginData.orderEditBegin.calculatedOrder?.id;
+    if (!calcId) throw new Error("orderEditBegin returned no calculatedOrder");
 
     // Build lookup maps
     const origMap  = new Map(originalItems.map((i) => [i.id, i.quantity]));
@@ -98,11 +83,9 @@ export async function editShopifyOrderItems(
     // Step 2a — Remove items that no longer exist in the new list
     for (const orig of originalItems) {
       if (!newByKey.has(orig.id)) {
-        const calcLineItemId = calcLineItemMap.get(toLineItemGid(orig.id));
-        if (!calcLineItemId) continue;
         const d = await shopifyGraphQL<{ orderEditSetQuantity: { userErrors: UserError[] } }>(
           SET_QTY,
-          { id: calcId, lineItemId: calcLineItemId, quantity: 0 },
+          { id: calcId, lineItemId: toCalcLineItemGid(orig.id), quantity: 0 },
         );
         checkErrors(d.orderEditSetQuantity.userErrors, "setQuantity(remove)");
       }
@@ -113,11 +96,9 @@ export async function editShopifyOrderItems(
       if (item.id.startsWith("new-")) continue;
       const origQty = origMap.get(item.id);
       if (origQty !== undefined && origQty !== item.qty) {
-        const calcLineItemId = calcLineItemMap.get(toLineItemGid(item.id));
-        if (!calcLineItemId) continue;
         const d = await shopifyGraphQL<{ orderEditSetQuantity: { userErrors: UserError[] } }>(
           SET_QTY,
-          { id: calcId, lineItemId: calcLineItemId, quantity: item.qty },
+          { id: calcId, lineItemId: toCalcLineItemGid(item.id), quantity: item.qty },
         );
         checkErrors(d.orderEditSetQuantity.userErrors, "setQuantity(update)");
       }

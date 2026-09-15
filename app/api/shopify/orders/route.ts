@@ -66,6 +66,36 @@ export async function GET(req: NextRequest) {
   }
 }
 
+const GOV_EN: Record<string, string> = {
+  "القاهرة":       "Cairo",
+  "الإسكندرية":    "Alexandria",
+  "الجيزة":        "Giza",
+  "الشرقية":       "Ash Sharqiyah",
+  "الدقهلية":      "Ad Daqahliyah",
+  "البحيرة":       "Al Buhayrah",
+  "المنوفية":      "Al Minufiyah",
+  "الغربية":       "Al Gharbiyah",
+  "كفر الشيخ":     "Kafr ash Shaykh",
+  "الإسماعيلية":   "Al Isma'iliyah",
+  "بورسعيد":       "Bur Sa'id",
+  "السويس":        "As Suways",
+  "شمال سيناء":    "Shamal Sina'",
+  "جنوب سيناء":    "Janub Sina'",
+  "الفيوم":        "Al Fayyum",
+  "بني سويف":      "Bani Suwayf",
+  "المنيا":        "Al Minya",
+  "أسيوط":        "Asyut",
+  "سوهاج":        "Suhaj",
+  "قنا":           "Qina",
+  "الأقصر":        "Al Uqsur",
+  "أسوان":        "Aswan",
+  "البحر الأحمر":  "Al Bahr al Ahmar",
+  "الوادي الجديد": "Al Wadi al Jadid",
+  "مطروح":        "Matruh",
+  "دمياط":        "Dumyat",
+  "القليوبية":     "Al Qalyubiyah",
+};
+
 async function resolveCustomerId(shop: string, token: string, version: string, firstName: string, lastName: string, rawPhone: string): Promise<number | null> {
   const digits = rawPhone.replace(/[^0-9]/g, "");
   const e164   = digits.startsWith("0") ? `+20${digits.slice(1)}` : `+${digits}`;
@@ -132,7 +162,7 @@ export async function POST(req: NextRequest) {
         phone:      phone.replace(/[^0-9+]/g, ""),
         address1,
         city,
-        province:   province ?? city,
+        province:   GOV_EN[province] ?? province ?? city,
         country:    "EG",
       },
       line_items: items.map((item: { variantId?: number; title: string; qty: number; price: number }) => ({
