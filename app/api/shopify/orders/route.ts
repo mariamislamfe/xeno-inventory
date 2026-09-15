@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
     // Build Shopify order payload
     const nameParts   = customerName.trim().split(" ");
     const firstName   = nameParts[0] ?? customerName;
-    const lastName    = nameParts.slice(1).join(" ") || ".";
+    const lastName    = nameParts.slice(1).join(" ") || "";
 
     const shopifyOrder = {
       financial_status: "pending",
