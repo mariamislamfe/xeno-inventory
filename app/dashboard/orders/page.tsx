@@ -118,7 +118,7 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
   const total = items.reduce((s, i) => s + i.price * i.qty, 0);
 
   async function handleCreate() {
-    if (!name || !phone || !address || !city) { error("بيانات ناقصة", "اسم العميل والهاتف والعنوان والمدينة مطلوبون"); return; }
+    if (!name || !phone || !address || !city || !gov) { error("بيانات ناقصة", "اسم العميل والهاتف والعنوان والمدينة والمحافظة مطلوبون"); return; }
     if (items.length === 0) { error("لا توجد منتجات", "أضف منتجاً واحداً على الأقل"); return; }
     setSaving(true);
     try {
@@ -172,7 +172,7 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
             <input value={city} onChange={(e) => setCity(e.target.value)} className="form-input" placeholder="القاهرة" />
           </div>
           <div>
-            <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">المحافظة</label>
+            <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">المحافظة *</label>
             <input value={gov} onChange={(e) => setGov(e.target.value)} className="form-input" placeholder="القاهرة" />
           </div>
         </div>
