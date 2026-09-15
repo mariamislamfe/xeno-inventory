@@ -91,6 +91,48 @@ function ProductPicker({ onSelect }: { onSelect: (title: string, variantTitle: s
   );
 }
 
+// ── Egyptian Governorates ───────────────────────────────────────────────
+const EG_GOVS = [
+  "القاهرة","الإسكندرية","الجيزة","الشرقية","الدقهلية","البحيرة","المنوفية",
+  "الغربية","كفر الشيخ","الإسماعيلية","بورسعيد","السويس","شمال سيناء",
+  "جنوب سيناء","الفيوم","بني سويف","المنيا","أسيوط","سوهاج","قنا","الأقصر",
+  "أسوان","البحر الأحمر","الوادي الجديد","مطروح","دمياط","القليوبية",
+];
+
+function GovPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const filtered = value.trim()
+    ? EG_GOVS.filter((g) => g.includes(value.trim()))
+    : EG_GOVS;
+  return (
+    <div className="relative">
+      <input
+        value={value}
+        onChange={(e) => { onChange(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        className="form-input"
+        placeholder="اكتب لتصفية المحافظات..."
+        autoComplete="off"
+      />
+      {open && filtered.length > 0 && (
+        <div className="absolute z-50 top-full right-0 left-0 mt-1 bg-[var(--bg-card)] border border-[var(--border-color)] rounded-[var(--radius-md)] shadow-xl max-h-48 overflow-y-auto">
+          {filtered.map((g) => (
+            <button
+              key={g}
+              type="button"
+              onMouseDown={() => { onChange(g); setOpen(false); }}
+              className="w-full text-right px-3 py-2 text-xs hover:bg-[var(--bg-base)] transition-colors"
+            >
+              {g}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Create Order Modal ─────────────────────────────────────────────────
 interface NewOrderItem { title: string; variantId?: number; qty: number; price: number }
 
@@ -173,7 +215,7 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
           </div>
           <div>
             <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">المحافظة *</label>
-            <input value={gov} onChange={(e) => setGov(e.target.value)} className="form-input" placeholder="القاهرة" />
+            <GovPicker value={gov} onChange={setGov} />
           </div>
         </div>
 
