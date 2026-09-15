@@ -141,7 +141,7 @@ export async function editShopifyOrderItems(
           userErrors { field message }
         }
       }`,
-      { id: calcId, notifyCustomer: false, staffNote: staffNote ?? "تعديل من XENO" },
+      { id: calcId, notifyCustomer: false, ...(staffNote ? { staffNote } : {}) },
     );
 
     checkErrors(commitData.orderEditCommit.userErrors, "orderEditCommit");

@@ -142,35 +142,7 @@ function EditItemsModal({ open, order, onClose, onSaved }: EditItemsModalProps) 
     if (items.length === 0) { error("لا توجد منتجات", "أضف منتجاً واحداً على الأقل"); return; }
     setSaving(true);
     try {
-      const originalNames = order.items.map((i) => `${i.productName}${i.variant ? ` (${i.variant})` : ""} ×${i.quantity}`).join("، ");
-      const newNames      = items.map((i) => `${i.productName}${i.variant ? ` (${i.variant})` : ""} ×${i.quantity}`).join("، ");
-      const changeNote    = `[تعديل يدوي] الأصل: ${originalNames} | بعد التعديل: ${newNames}`;
-      const fullNote      = note ? `${note}\n${changeNote}` : changeNote;
-
-      // 1. Save items_override + note (always — J&T uses this)
-      await Promise.all([
-        fetch(`/api/shopify/orders/${order.shopifyId}`, {
-          method:  "PUT",
-          headers: { "Content-Type": "application/json" },
-          body:    JSON.stringify({ note: fullNote }),
-        }),
-        fetch("/api/confirmation/ops", {
-          method:  "POST",
-          headers: { "Content-Type": "application/json" },
-          body:    JSON.stringify({
-            shopify_order_id: order.shopifyId,
-            order_number:     order.orderNumber,
-            customer_name:    order.customerName,
-            phone:            order.customerPhone,
-            total,
-            // no op_status — editing items must NOT change the confirmation status
-            internal_note:    changeNote,
-            items_override:   items.map((i) => ({ name: `${i.productName}${i.variant ? ` (${i.variant})` : ""}`, qty: i.quantity })),
-          }),
-        }),
-      ]);
-
-      // 2. Update Shopify order items via GraphQL (best-effort)
+      // 1. Update Shopify via GraphQL FIRST — if it fails, stop here
       const gqlRes = await fetch(`/api/shopify/orders/${order.shopifyId}/edit`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
@@ -183,22 +155,31 @@ function EditItemsModal({ open, order, onClose, onSaved }: EditItemsModalProps) 
             variantId: i.variantId,
           })),
           originalItems: order.items.map((i) => ({ id: i.id, quantity: i.quantity })),
-          staffNote: changeNote,
         }),
       });
 
-      if (gqlRes.ok) {
-        success("تم حفظ التعديلات", "تم تعديل الطلب على Shopify ✓");
-      } else {
+      if (!gqlRes.ok) {
         const gqlData = await gqlRes.json() as { error?: string };
-        // Local save succeeded — warn about Shopify
-        success(
-          "تم الحفظ محلياً",
-          `لم يُحدَّث Shopify: ${gqlData.error ?? "خطأ غير معروف"}. تحقق من صلاحية write_order_edits.`,
-        );
+        error("فشل تعديل الطلب", gqlData.error ?? "خطأ غير معروف");
+        return;
       }
 
-      onSaved(items, fullNote);
+      // 2. Shopify succeeded → save items_override locally (J&T uses this)
+      await fetch("/api/confirmation/ops", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({
+          shopify_order_id: order.shopifyId,
+          order_number:     order.orderNumber,
+          customer_name:    order.customerName,
+          phone:            order.customerPhone,
+          total,
+          items_override: items.map((i) => ({ name: `${i.productName}${i.variant ? ` (${i.variant})` : ""}`, qty: i.quantity })),
+        }),
+      });
+
+      success("تم حفظ التعديلات", "تم تعديل الطلب على Shopify ✓");
+      onSaved(items, note);
       onClose();
     } catch (err) {
       error("خطأ", String(err));
@@ -220,13 +201,6 @@ function EditItemsModal({ open, order, onClose, onSaved }: EditItemsModalProps) 
       }
     >
       <div className="space-y-4">
-        <div className="bg-amber-50 border border-amber-200 rounded-[var(--radius-md)] p-3 flex items-start gap-2">
-          <AlertCircle size={14} className="text-amber-700 flex-shrink-0 mt-0.5" />
-          <p className="text-xs text-amber-800">
-            التعديلات تُحفظ في XENO وتُرسل لـ Shopify عبر GraphQL API. يلزم صلاحية <span className="font-mono font-semibold">write_order_edits</span> في إعدادات الـ app — إن لم تتوفر تُحفظ محلياً فقط.
-          </p>
-        </div>
-
         {/* Current items */}
         <div>
           <label className="block text-xs font-semibold text-[var(--text-secondary)] mb-2">المنتجات الحالية</label>
