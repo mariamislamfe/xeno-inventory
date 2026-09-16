@@ -1,14 +1,8 @@
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 
-// ── J&T connection test ───────────────────────────────────────────────────────
-// Tries to call the J&T API with a minimal payload to verify credentials work.
-
-function md5hex(str: string) {
-  return crypto.createHash("md5").update(str, "utf8").digest("hex");
-}
-function base64Md5(str: string) {
-  return Buffer.from(md5hex(str)).toString("base64");
+function md5base64(str: string): string {
+  return crypto.createHash("md5").update(str, "utf8").digest("base64");
 }
 
 export async function GET() {
@@ -26,57 +20,42 @@ export async function GET() {
     }, { status: 503 });
   }
 
-  // Build digest
-  const pwdProcessed = md5hex(PASSWORD + "jadada236t2");
-  const bodyDigest   = base64Md5(CUSTOMER_CODE + pwdProcessed + PRIVATE_KEY);
-
-  // Use a simple query — e.g. query a non-existent tracking number just to get API response
   const bizParams  = { billCode: "TEST-XENO-000" };
   const bizContent = JSON.stringify(bizParams);
-  const headerDig  = base64Md5(bizContent + PRIVATE_KEY);
+  const digest     = md5base64(bizContent + PRIVATE_KEY);
+  const url        = `${BASE_URL}/api/logistics/trace?uuid=${UUID}`;
 
-  const url = `${BASE_URL}/api/logistics/trace?uuid=${UUID}`;
+  const sentPayload = {
+    customerCode: `${CUSTOMER_CODE.slice(0,3)}...`,
+    apiAccount:   `${API_ACCOUNT.slice(0,5)}...`,
+    privateKey:   `${PRIVATE_KEY.slice(0,5)}...`,
+    uuid:         `${UUID.slice(0,5)}...`,
+    headers:      { apiAccount: `${API_ACCOUNT.slice(0,5)}...`, timestamp: "...", digest: `${digest.slice(0,8)}...` },
+    body:         `bizContent=${bizContent.slice(0,30)}...`,
+  };
 
   try {
-    const formBody = new URLSearchParams({
-      customerCode: CUSTOMER_CODE,
-      apiAccount:   API_ACCOUNT,
-      digest:       bodyDigest,
-      bizContent,
-    }).toString();
-
     const res = await fetch(url, {
       method:  "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
-        "digest":        headerDig,
+        "apiAccount":   API_ACCOUNT,
+        "timestamp":    String(Date.now()),
+        "digest":       digest,
       },
-      body: formBody,
+      body: new URLSearchParams({ bizContent }).toString(),
     });
 
     const data = await res.json();
 
-    // J&T returns code "1" for success, other codes for errors
-    // Even a "not found" response means the API is reachable and credentials are accepted
-    const sentPayload = {
-      customerCode: CUSTOMER_CODE ? `${CUSTOMER_CODE.slice(0,3)}...` : "EMPTY",
-      apiAccount:   API_ACCOUNT   ? `${API_ACCOUNT.slice(0,5)}...` : "EMPTY",
-      privateKey:   PRIVATE_KEY   ? `${PRIVATE_KEY.slice(0,5)}...` : "EMPTY",
-      uuid:         UUID          ? `${UUID.slice(0,5)}...`        : "EMPTY",
-    };
-
-    if (res.ok) {
-      return NextResponse.json({
-        ok:          data?.code === "1" || data?.code === 1,
-        jtCode:      data?.code,
-        jtMsg:       data?.msg ?? data?.message,
-        raw:         data,
-        sentPayload,
-      });
-    }
-
-    return NextResponse.json({ ok: false, error: `HTTP ${res.status}`, raw: data, sentPayload }, { status: res.status });
+    return NextResponse.json({
+      ok:          data?.code === "1" || data?.code === 1,
+      jtCode:      data?.code,
+      jtMsg:       data?.msg ?? data?.message,
+      raw:         data,
+      sentPayload,
+    });
   } catch (err) {
-    return NextResponse.json({ ok: false, error: String(err) }, { status: 500 });
+    return NextResponse.json({ ok: false, error: String(err), sentPayload }, { status: 500 });
   }
 }
