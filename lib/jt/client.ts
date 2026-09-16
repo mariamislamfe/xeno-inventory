@@ -1,66 +1,54 @@
 import crypto from "crypto";
 
 // ── J&T Express Egypt API Client ─────────────────────────────────────────────
-const BASE_URL       = process.env.JT_BASE_URL      ?? "";
-const UUID           = process.env.JT_UUID          ?? "";
-const CUSTOMER_CODE  = process.env.JT_CUSTOMER_CODE ?? "";
-const PASSWORD       = process.env.JT_PASSWORD      ?? "";
-const PRIVATE_KEY    = process.env.JT_PRIVATE_KEY   ?? "";
-const API_ACCOUNT    = process.env.JT_API_ACCOUNT   ?? "";
+const BASE_URL      = process.env.JT_BASE_URL      ?? "";
+const UUID          = process.env.JT_UUID          ?? "";
+const CUSTOMER_CODE = process.env.JT_CUSTOMER_CODE ?? "";
+const PASSWORD      = process.env.JT_PASSWORD      ?? "";
+const PRIVATE_KEY   = process.env.JT_PRIVATE_KEY   ?? "";
+const API_ACCOUNT   = process.env.JT_API_ACCOUNT   ?? "";
 
 // ── Signature ─────────────────────────────────────────────────────────────────
 
-function md5hex(str: string) {
+function md5hex(str: string): string {
   return crypto.createHash("md5").update(str, "utf8").digest("hex");
 }
 
-function base64Md5(str: string) {
-  return Buffer.from(md5hex(str)).toString("base64");
+function md5base64(str: string): string {
+  return crypto.createHash("md5").update(str, "utf8").digest("base64");
 }
 
-/** digest inside the request body */
-function bodyDigest() {
-  const pwdProcessed = md5hex(PASSWORD + "jadada236t2");
-  return base64Md5(CUSTOMER_CODE + pwdProcessed + PRIVATE_KEY);
+/** Header digest: base64(md5(bizContent + privateKey)) */
+function headerDigest(bizContent: string): string {
+  return md5base64(bizContent + PRIVATE_KEY);
 }
 
-/** digest header — computed from the bizContent JSON string */
-function headerDigest(bizContent: string) {
-  return base64Md5(bizContent + PRIVATE_KEY);
+/** Order sign (inside bizContent): base64(md5(customerCode + UPPER(md5(pwd+"jadada236t2")) + privateKey)) */
+function orderSign(): string {
+  const pwdHash = md5hex(PASSWORD + "jadada236t2").toUpperCase();
+  return md5base64(CUSTOMER_CODE + pwdHash + PRIVATE_KEY);
 }
 
 // ── Generic J&T request ───────────────────────────────────────────────────────
+// Format: headers = {apiAccount, timestamp, digest}; body = form-encoded bizContent only
 
 async function jtPost(path: string, bizParams: Record<string, unknown>) {
-  if (!API_ACCOUNT)    throw new Error("JT_API_ACCOUNT env var is missing");
-  if (!CUSTOMER_CODE)  throw new Error("JT_CUSTOMER_CODE env var is missing");
-  if (!BASE_URL)       throw new Error("JT_BASE_URL env var is missing");
+  if (!API_ACCOUNT)   throw new Error("JT_API_ACCOUNT env var is missing");
+  if (!CUSTOMER_CODE) throw new Error("JT_CUSTOMER_CODE env var is missing");
+  if (!BASE_URL)      throw new Error("JT_BASE_URL env var is missing");
 
   const bizContent = JSON.stringify(bizParams);
-
-  const payload = {
-    customerCode: CUSTOMER_CODE,
-    apiAccount:   API_ACCOUNT,
-    digest:       bodyDigest(),
-    bizContent,
-  };
-
-  const url = `${BASE_URL}${path}?uuid=${UUID}`;
-
-  const formBody = new URLSearchParams({
-    customerCode: payload.customerCode,
-    apiAccount:   payload.apiAccount,
-    digest:       payload.digest,
-    bizContent:   payload.bizContent,
-  }).toString();
+  const url        = `${BASE_URL}${path}?uuid=${UUID}`;
 
   const res = await fetch(url, {
     method:  "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
-      "digest":        headerDigest(bizContent),
+      "apiAccount":   API_ACCOUNT,
+      "timestamp":    String(Date.now()),
+      "digest":       headerDigest(bizContent),
     },
-    body: formBody,
+    body: new URLSearchParams({ bizContent }).toString(),
   });
 
   const data = await res.json();
@@ -71,15 +59,15 @@ async function jtPost(path: string, bizParams: Record<string, unknown>) {
 // ── Create Order ──────────────────────────────────────────────────────────────
 
 export interface JTOrderInput {
-  orderNumber:    string;
-  customerName:   string;
-  phone:          string;
-  address:        string;
-  city:           string;
-  governorate:    string;
-  items:          { name: string; qty: number }[];
-  totalAmount:    number;
-  weightKg?:      number;
+  orderNumber:  string;
+  customerName: string;
+  phone:        string;
+  address:      string;
+  city:         string;
+  governorate:  string;
+  items:        { name: string; qty: number }[];
+  totalAmount:  number;
+  weightKg?:    number;
 }
 
 export interface JTOrderResult {
@@ -94,12 +82,14 @@ export async function createJTOrder(order: JTOrderInput): Promise<JTOrderResult>
   const goodsName = order.items.map(i => `${i.name} x${i.qty}`).join(", ").slice(0, 100);
 
   const bizParams = {
+    customerCode:         CUSTOMER_CODE,
+    sign:                 orderSign(),
     orderCode:            order.orderNumber,
-    senderName:           process.env.XENO_SENDER_NAME    ?? "XENO",
-    senderMobile:         process.env.XENO_SENDER_PHONE   ?? "",
-    senderProvinceName:   process.env.XENO_PROVINCE       ?? "Cairo",
-    senderCityName:       process.env.XENO_CITY           ?? "Cairo",
-    senderAddress:        process.env.XENO_ADDRESS        ?? "",
+    senderName:           process.env.XENO_SENDER_NAME  ?? "XENO",
+    senderMobile:         process.env.XENO_SENDER_PHONE ?? "",
+    senderProvinceName:   process.env.XENO_PROVINCE     ?? "Cairo",
+    senderCityName:       process.env.XENO_CITY         ?? "Cairo",
+    senderAddress:        process.env.XENO_ADDRESS      ?? "",
     receiverName:         order.customerName,
     receiverMobile:       order.phone.replace(/[^0-9]/g, "").replace(/^20/, "0"),
     receiverProvinceName: order.governorate || order.city || "Cairo",
@@ -108,15 +98,13 @@ export async function createJTOrder(order: JTOrderInput): Promise<JTOrderResult>
     goodsName,
     goodsWeight:          order.weightKg ?? 0.5,
     goodsNum:             order.items.reduce((s, i) => s + i.qty, 0) || 1,
-    payType:              1,        // 1 = COD
+    payType:              1,
     codAmount:            order.totalAmount,
     remark:               `XENO Order #${order.orderNumber}`,
   };
 
   try {
     const data = await jtPost("/api/order/addOrder", bizParams);
-
-    // J&T success: code "1" or "200", tracking in data.billCode or data.waybillNo
     const isSuccess = data?.code === "1" || data?.code === 1 || data?.success === true;
     if (isSuccess) {
       const tracking = data?.data?.billCode ?? data?.data?.waybillNo ?? data?.data?.trackingNumber;
@@ -143,7 +131,11 @@ export async function getJTTracking(trackingNumber: string) {
 
 export async function cancelJTOrder(orderNumber: string) {
   try {
-    const data = await jtPost("/api/order/cancelOrder", { orderCode: orderNumber });
+    const data = await jtPost("/api/order/cancelOrder", {
+      customerCode: CUSTOMER_CODE,
+      sign:         orderSign(),
+      orderCode:    orderNumber,
+    });
     return { ok: true, data };
   } catch (err) {
     return { ok: false, error: String(err) };
