@@ -38,18 +38,20 @@ export async function GET() {
   const url = `${BASE_URL}/api/logistics/trace?uuid=${UUID}`;
 
   try {
+    const formBody = new URLSearchParams({
+      customerCode: CUSTOMER_CODE,
+      apiAccount:   API_ACCOUNT,
+      digest:       bodyDigest,
+      bizContent,
+    }).toString();
+
     const res = await fetch(url, {
       method:  "POST",
       headers: {
-        "Content-Type": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
         "digest":        headerDig,
       },
-      body: JSON.stringify({
-        customerCode: CUSTOMER_CODE,
-        apiAccount:   API_ACCOUNT,
-        digest:       bodyDigest,
-        bizContent,
-      }),
+      body: formBody,
     });
 
     const data = await res.json();

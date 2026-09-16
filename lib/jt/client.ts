@@ -47,13 +47,20 @@ async function jtPost(path: string, bizParams: Record<string, unknown>) {
 
   const url = `${BASE_URL}${path}?uuid=${UUID}`;
 
+  const formBody = new URLSearchParams({
+    customerCode: payload.customerCode,
+    apiAccount:   payload.apiAccount,
+    digest:       payload.digest,
+    bizContent:   payload.bizContent,
+  }).toString();
+
   const res = await fetch(url, {
     method:  "POST",
     headers: {
-      "Content-Type": "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
       "digest":        headerDigest(bizContent),
     },
-    body: JSON.stringify(payload),
+    body: formBody,
   });
 
   const data = await res.json();
