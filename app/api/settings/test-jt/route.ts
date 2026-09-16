@@ -5,6 +5,26 @@ function md5base64(str: string): string {
   return crypto.createHash("md5").update(str, "utf8").digest("base64");
 }
 
+async function tryRequest(url: string, apiAccountValue: string, bizContent: string, privateKey: string) {
+  const digest = md5base64(bizContent + privateKey);
+  try {
+    const res = await fetch(url, {
+      method:  "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "apiAccount":   apiAccountValue,
+        "timestamp":    String(Date.now()),
+        "digest":       digest,
+      },
+      body: new URLSearchParams({ bizContent }).toString(),
+    });
+    const data = await res.json();
+    return { code: data?.code, msg: data?.msg ?? data?.message, raw: data };
+  } catch (err) {
+    return { code: "ERR", msg: String(err) };
+  }
+}
+
 export async function GET() {
   const BASE_URL      = process.env.JT_BASE_URL;
   const UUID          = process.env.JT_UUID;
@@ -14,48 +34,27 @@ export async function GET() {
   const API_ACCOUNT   = process.env.JT_API_ACCOUNT;
 
   if (!BASE_URL || !UUID || !CUSTOMER_CODE || !PASSWORD || !PRIVATE_KEY || !API_ACCOUNT) {
-    return NextResponse.json({
-      ok: false,
-      error: "متغيرات البيئة الخاصة بـ J&T غير مكتملة. تأكد من: JT_BASE_URL, JT_UUID, JT_CUSTOMER_CODE, JT_PASSWORD, JT_PRIVATE_KEY, JT_API_ACCOUNT",
-    }, { status: 503 });
+    return NextResponse.json({ ok: false, error: "J&T env vars missing" }, { status: 503 });
   }
 
-  const bizParams  = { billCode: "TEST-XENO-000" };
-  const bizContent = JSON.stringify(bizParams);
-  const digest     = md5base64(bizContent + PRIVATE_KEY);
+  const bizContent = JSON.stringify({ billCode: "TEST-XENO-000" });
   const url        = `${BASE_URL}/api/logistics/trace?uuid=${UUID}`;
 
-  const sentPayload = {
-    customerCode: `${CUSTOMER_CODE.slice(0,3)}...`,
-    apiAccount:   `${API_ACCOUNT.slice(0,5)}...`,
-    privateKey:   `${PRIVATE_KEY.slice(0,5)}...`,
-    uuid:         `${UUID.slice(0,5)}...`,
-    headers:      { apiAccount: `${API_ACCOUNT.slice(0,5)}...`, timestamp: "...", digest: `${digest.slice(0,8)}...` },
-    body:         `bizContent=${bizContent.slice(0,30)}...`,
-  };
+  // Try A: numeric apiAccount (current approach)
+  const trialA = await tryRequest(url, API_ACCOUNT, bizContent, PRIVATE_KEY);
 
-  try {
-    const res = await fetch(url, {
-      method:  "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "apiAccount":   API_ACCOUNT,
-        "timestamp":    String(Date.now()),
-        "digest":       digest,
-      },
-      body: new URLSearchParams({ bizContent }).toString(),
-    });
+  // Try B: UUID as apiAccount
+  const trialB = await tryRequest(url, UUID, bizContent, PRIVATE_KEY);
 
-    const data = await res.json();
+  const winner = trialA.code !== "145003010" && trialA.code !== "145003051"
+    ? "A (numeric apiAccount)"
+    : trialB.code !== "145003010" && trialB.code !== "145003051"
+      ? "B (UUID as apiAccount)"
+      : "neither";
 
-    return NextResponse.json({
-      ok:          data?.code === "1" || data?.code === 1,
-      jtCode:      data?.code,
-      jtMsg:       data?.msg ?? data?.message,
-      raw:         data,
-      sentPayload,
-    });
-  } catch (err) {
-    return NextResponse.json({ ok: false, error: String(err), sentPayload }, { status: 500 });
-  }
+  return NextResponse.json({
+    winner,
+    trialA: { apiAccountUsed: `${API_ACCOUNT.slice(0,8)}...`, ...trialA },
+    trialB: { apiAccountUsed: `${UUID.slice(0,8)}...`, ...trialB },
+  });
 }
