@@ -51,8 +51,14 @@ export async function GET() {
     const res  = await fetch(url, { method: "POST", headers: fullPayload.headers, body: formBody });
     const data = await res.json();
 
+    // 145003100 = "Illegal waybill number" → auth succeeded, fake tracking number rejected = CONNECTED ✓
+    const connected = data?.code === "1" || data?.code === 1 || data?.code === "145003100";
+
     return NextResponse.json({
-      jtResponse:  data,
+      ok:          connected,
+      status:      connected ? "متصل ✓" : "خطأ في الاعتماديات",
+      jtCode:      data?.code,
+      jtMsg:       data?.msg,
       fullPayload,
     });
   } catch (err) {
