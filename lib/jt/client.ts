@@ -1,12 +1,12 @@
 import crypto from "crypto";
 
 // ── J&T Express Egypt API Client ─────────────────────────────────────────────
-const BASE_URL      = process.env.JT_BASE_URL      ?? "";
-const UUID          = process.env.JT_UUID          ?? "";
-const CUSTOMER_CODE = process.env.JT_CUSTOMER_CODE ?? "";
-const PASSWORD      = process.env.JT_PASSWORD      ?? "";
-const PRIVATE_KEY   = process.env.JT_PRIVATE_KEY   ?? "";
-const API_ACCOUNT   = process.env.JT_API_ACCOUNT   ?? "";
+const BASE_URL      = (process.env.JT_BASE_URL      ?? "").trim();
+const UUID          = (process.env.JT_UUID          ?? "").trim();
+const CUSTOMER_CODE = (process.env.JT_CUSTOMER_CODE ?? "").trim();
+const PASSWORD      = (process.env.JT_PASSWORD      ?? "").trim();
+const PRIVATE_KEY   = (process.env.JT_PRIVATE_KEY   ?? "").trim();
+const API_ACCOUNT   = (process.env.JT_API_ACCOUNT   ?? "").trim();
 
 // ── Signature ─────────────────────────────────────────────────────────────────
 
