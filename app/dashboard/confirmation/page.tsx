@@ -424,7 +424,11 @@ export default function ConfirmationPage() {
     }
   }, [error]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    const iv = setInterval(load, 30_000);
+    return () => clearInterval(iv);
+  }, [load]);
 
   const counts = useMemo(() => {
     const m: Record<TabKey, number> = {
