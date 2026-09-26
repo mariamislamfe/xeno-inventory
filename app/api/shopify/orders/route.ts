@@ -149,33 +149,31 @@ export async function POST(req: NextRequest) {
 
     const customerId  = await resolveCustomerId(SHOP, TOKEN, VERSION, firstName, lastName, phone);
 
+    // Fallback email derived from phone so Shopify always links a customer
+    const digits      = phone.replace(/[^0-9]/g, "");
+    const fallbackEmail = `${digits}@xeno-orders.com`;
+
+    const addrBlock = {
+      first_name:   firstName,
+      last_name:    lastName || firstName,
+      phone:        phone.replace(/[^0-9+]/g, ""),
+      address1:     address1 || city,
+      city,
+      province:     GOV_EN[province] ?? province ?? city,
+      country:      "Egypt",
+      country_code: "EG",
+    };
+
     const shopifyOrder: Record<string, unknown> = {
+      email:            fallbackEmail,
       financial_status: "pending",
       send_receipt:     false,
       send_fulfillment_receipt: false,
       note:             note ?? "",
       tags:             "xeno_manual",
       ...(customerId ? { customer: { id: customerId } } : {}),
-      shipping_address: {
-        first_name:   firstName,
-        last_name:    lastName,
-        phone:        phone.replace(/[^0-9+]/g, ""),
-        address1,
-        city,
-        province:     GOV_EN[province] ?? province ?? city,
-        country:      "Egypt",
-        country_code: "EG",
-      },
-      billing_address: {
-        first_name:   firstName,
-        last_name:    lastName,
-        phone:        phone.replace(/[^0-9+]/g, ""),
-        address1,
-        city,
-        province:     GOV_EN[province] ?? province ?? city,
-        country:      "Egypt",
-        country_code: "EG",
-      },
+      shipping_address: addrBlock,
+      billing_address:  addrBlock,
       line_items: items.map((item: { variantId?: number; title: string; qty: number; price: number }) => ({
         ...(item.variantId ? { variant_id: item.variantId } : { title: item.title }),
         quantity:       item.qty,
@@ -197,7 +195,17 @@ export async function POST(req: NextRequest) {
 
     const data  = await resp.json() as { order: ShopifyOrderRaw };
     const order = normalizeOrder(data.order);
-    return NextResponse.json({ ok: true, order }, { status: 201 });
+    return NextResponse.json({
+      ok: true,
+      order,
+      _debug: {
+        shopify_has_shipping: !!data.order.shipping_address,
+        shopify_customer:     (data.order as unknown as Record<string,unknown>)?.customer ?? null,
+        shopify_email:        data.order.email,
+        shipping_city:        data.order.shipping_address?.city,
+        shipping_phone:       data.order.shipping_address?.phone,
+      },
+    }, { status: 201 });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }
