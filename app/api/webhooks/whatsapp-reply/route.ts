@@ -41,6 +41,17 @@ export async function POST(req: NextRequest) {
   const waStatus = status === "confirmed" ? "delivered" : "read";
   await supabaseAdmin.from("whatsapp_messages").update({ status: waStatus }).eq("id", msg.id);
 
+  // Also sync xeno_ops so the confirmation tab moves correctly
+  const opStatus = status === "confirmed" ? "confirmed" : "cancelled";
+  if (ordId) {
+    await supabaseAdmin.from("xeno_ops").upsert({
+      shopify_order_id: ordId,
+      order_number:     ordNum,
+      op_status:        opStatus,
+      updated_at:       new Date().toISOString(),
+    }, { onConflict: "shopify_order_id" });
+  }
+
   const detail = status === "confirmed"
     ? `✅ العميل أكّد الطلب #${ordNum} عبر واتساب`
     : `❌ العميل ألغى الطلب #${ordNum} عبر واتساب`;
