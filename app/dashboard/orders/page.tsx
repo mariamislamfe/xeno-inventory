@@ -325,13 +325,15 @@ const VROBO_TAGS = [
 ];
 
 // ── Filter tabs ────────────────────────────────────────────────────────
-type TabKey = "any" | "pending" | "fulfilled" | "unfulfilled";
+type TabKey = "any" | "pending" | "fulfilled" | "unfulfilled" | "confirmed" | "postponed";
 
 const TABS: { key: TabKey; label: string; shopifyParam: Record<string, string> }[] = [
-  { key: "any",         label: "الكل",       shopifyParam: { status: "any" } },
-  { key: "unfulfilled", label: "جديدة",      shopifyParam: { status: "open",   fulfillment_status: "unfulfilled" } },
-  { key: "pending",     label: "قيد التنفيذ", shopifyParam: { status: "open",   fulfillment_status: "partial" } },
-  { key: "fulfilled",   label: "مكتملة",     shopifyParam: { status: "closed", fulfillment_status: "fulfilled" } },
+  { key: "any",         label: "الكل",        shopifyParam: { status: "any" } },
+  { key: "unfulfilled", label: "جديدة",       shopifyParam: { status: "open",   fulfillment_status: "unfulfilled" } },
+  { key: "pending",     label: "قيد التنفيذ",  shopifyParam: { status: "open",   fulfillment_status: "partial" } },
+  { key: "fulfilled",   label: "مكتملة",      shopifyParam: { status: "closed", fulfillment_status: "fulfilled" } },
+  { key: "confirmed",   label: "✅ مؤكدة",    shopifyParam: { status: "any",    tag: "confirmed" } },
+  { key: "postponed",   label: "⏰ مؤجلة",    shopifyParam: { status: "any",    tag: "postponed" } },
 ];
 
 function formatDate(iso: string): string {
@@ -377,8 +379,9 @@ export default function OrdersPage() {
         // cursor-based: only limit + page_info
         params.set("page_info", cursor);
       } else {
-        if (q)   params.set("query", q);
-        if (tag) params.set("tag", tag);
+        if (q) params.set("query", q);
+        // Only apply dropdown tag if the tab doesn't already filter by tag
+        if (tag && !t.shopifyParam.tag) params.set("tag", tag);
       }
 
       const res  = await fetch(`/api/shopify/orders?${params}`);
