@@ -89,10 +89,16 @@ export interface JTOrderResult {
 export async function createJTOrder(order: JTOrderInput): Promise<JTOrderResult> {
   const goodsName = order.items.map(i => `${i.name} x${i.qty}`).join(", ").slice(0, 100);
 
+  // Shopify order names start with "#" (e.g. "#1001") — J&T rejects that character
+  const orderCode = (order.orderNumber ?? "").replace(/^#/, "").trim();
+  if (!orderCode) {
+    return { ok: false, error: `رقم الطلب فارغ أو غير صالح: "${order.orderNumber}"` };
+  }
+
   const bizParams = {
     customerCode:         CUSTOMER_CODE,
     sign:                 orderSign(),
-    orderCode:            order.orderNumber,
+    orderCode,
     senderName:           process.env.XENO_SENDER_NAME  ?? "XENO",
     senderMobile:         process.env.XENO_SENDER_PHONE ?? "",
     senderProvinceName:   process.env.XENO_PROVINCE     ?? "Cairo",
