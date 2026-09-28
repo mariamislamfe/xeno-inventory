@@ -98,6 +98,7 @@ export async function createJTOrder(order: JTOrderInput): Promise<JTOrderResult>
   const bizParams = {
     customerCode:         CUSTOMER_CODE,
     sign:                 orderSign(),
+    expressType:          process.env.JT_EXPRESS_TYPE ?? "EZ",
     orderCode,
     senderName:           process.env.XENO_SENDER_NAME  ?? "XENO",
     senderMobile:         process.env.XENO_SENDER_PHONE ?? "",
