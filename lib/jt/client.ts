@@ -99,7 +99,10 @@ export async function createJTOrder(order: JTOrderInput): Promise<JTOrderResult>
     customerCode:         CUSTOMER_CODE,
     sign:                 orderSign(),
     expressType:          process.env.JT_EXPRESS_TYPE ?? "EZ",
+    // J&T regional APIs differ on the field name for merchant order number
     orderCode,
+    txlogisticId:         orderCode,
+    customerOrderNo:      orderCode,
     senderName:           process.env.XENO_SENDER_NAME  ?? "XENO",
     senderMobile:         process.env.XENO_SENDER_PHONE ?? "",
     senderProvinceName:   process.env.XENO_PROVINCE     ?? "Cairo",
@@ -125,6 +128,7 @@ export async function createJTOrder(order: JTOrderInput): Promise<JTOrderResult>
       const tracking = data?.data?.billCode ?? data?.data?.waybillNo ?? data?.data?.trackingNumber;
       return { ok: true, trackingNumber: tracking, jtOrderId: data?.data?.orderId, raw: data };
     }
+    console.error("[J&T] addOrder failed:", JSON.stringify(data));
     return { ok: false, error: data?.message ?? data?.msg ?? JSON.stringify(data), raw: data };
   } catch (err) {
     return { ok: false, error: String(err) };
