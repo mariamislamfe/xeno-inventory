@@ -1,38 +1,55 @@
+import { createServerClient } from "@supabase/ssr";
 import { NextRequest, NextResponse } from "next/server";
 
-const SESSION_COOKIE = "xeno_session";
-const ONE_YEAR = 60 * 60 * 24 * 365;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type CookieTuple = { name: string; value: string; options: any };
 
+function makeSupabaseClient(req: NextRequest, collected: CookieTuple[]) {
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll: () => req.cookies.getAll(),
+        setAll: (cookiesToSet) => { cookiesToSet.forEach((c) => collected.push(c)); },
+      },
+    }
+  );
+}
+
+function applyCollected(res: NextResponse, collected: CookieTuple[]) {
+  collected.forEach(({ name, value, options }) => res.cookies.set(name, value, options));
+}
+
+// POST /api/auth — sign in with email + password
 export async function POST(req: NextRequest) {
-  const { password } = await req.json();
-  const adminPassword = process.env.XENO_ADMIN_PASSWORD;
+  const { email, password } = await req.json() as { email: string; password: string };
 
-  if (!adminPassword) {
-    return NextResponse.json({ error: "Auth not configured" }, { status: 503 });
+  if (!email || !password) {
+    return NextResponse.json({ error: "البريد الإلكتروني وكلمة المرور مطلوبان" }, { status: 400 });
   }
 
-  if (!password || password !== adminPassword) {
-    return NextResponse.json({ error: "كلمة المرور غلط" }, { status: 401 });
-  }
+  const collected: CookieTuple[] = [];
+  const supabase = makeSupabaseClient(req, collected);
 
-  const sessionSecret = process.env.XENO_SESSION_SECRET;
-  if (!sessionSecret) {
-    return NextResponse.json({ error: "Session secret not configured" }, { status: 503 });
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) {
+    return NextResponse.json({ error: "البريد الإلكتروني أو كلمة المرور غلط" }, { status: 401 });
   }
 
   const res = NextResponse.json({ ok: true });
-  res.cookies.set(SESSION_COOKIE, sessionSecret, {
-    httpOnly: true,
-    secure:   process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    maxAge:   ONE_YEAR,
-    path:     "/",
-  });
+  applyCollected(res, collected);
   return res;
 }
 
-export async function DELETE() {
+// DELETE /api/auth — sign out
+export async function DELETE(req: NextRequest) {
+  const collected: CookieTuple[] = [];
+  const supabase = makeSupabaseClient(req, collected);
+
+  await supabase.auth.signOut();
+
   const res = NextResponse.json({ ok: true });
-  res.cookies.set(SESSION_COOKIE, "", { maxAge: 0, path: "/" });
+  applyCollected(res, collected);
   return res;
 }
