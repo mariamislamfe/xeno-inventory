@@ -1,10 +1,14 @@
 import { supabaseAdmin } from "@/lib/supabase/client";
+import { requireAdmin } from "@/lib/auth/requireAdmin";
 import { NextRequest, NextResponse } from "next/server";
 
 export const revalidate = 0;
 
-// GET /api/users — list all users with their profiles
+// GET /api/users — list all users (admin only)
 export async function GET() {
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth.response;
+
   const { data: { users }, error } = await supabaseAdmin.auth.admin.listUsers();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
@@ -17,11 +21,11 @@ export async function GET() {
   const list = (users ?? []).map((u) => {
     const p = profileMap.get(u.id);
     return {
-      id:        u.id,
-      email:     u.email ?? "",
-      fullName:  p?.full_name ?? u.email?.split("@")[0] ?? "—",
-      role:      (p?.role as string) ?? "employee",
-      createdAt: u.created_at,
+      id:         u.id,
+      email:      u.email ?? "",
+      fullName:   p?.full_name ?? u.email?.split("@")[0] ?? "—",
+      role:       (p?.role as string) ?? "employee",
+      createdAt:  u.created_at,
       lastSignIn: u.last_sign_in_at ?? null,
     };
   });
@@ -29,13 +33,16 @@ export async function GET() {
   return NextResponse.json({ users: list });
 }
 
-// POST /api/users — create a new user
+// POST /api/users — create a new user (admin only)
 export async function POST(req: NextRequest) {
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth.response;
+
   const { email, password, fullName, role } = await req.json() as {
-    email: string;
+    email:    string;
     password: string;
     fullName: string;
-    role: "admin" | "employee";
+    role:     "admin" | "employee";
   };
 
   if (!email || !password || !fullName) {
@@ -59,7 +66,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 400 });
   }
 
-  // Upsert profile with role (trigger may already create it, we want to set role)
   if (user) {
     await supabaseAdmin.from("profiles").upsert({
       id:        user.id,

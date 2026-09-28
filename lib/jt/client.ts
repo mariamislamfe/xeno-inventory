@@ -32,7 +32,7 @@ function orderSign(): string {
 // ── Generic J&T request ───────────────────────────────────────────────────────
 // Format: headers = {apiAccount, timestamp, digest}; body = form-encoded bizContent only
 
-async function jtPost(path: string, bizParams: Record<string, unknown>) {
+async function jtPost(path: string, bizParams: Record<string, unknown>, timeoutMs = 15_000) {
   if (!API_ACCOUNT)   throw new Error("JT_API_ACCOUNT env var is missing");
   if (!CUSTOMER_CODE) throw new Error("JT_CUSTOMER_CODE env var is missing");
   if (!BASE_URL)      throw new Error("JT_BASE_URL env var is missing");
@@ -40,20 +40,28 @@ async function jtPost(path: string, bizParams: Record<string, unknown>) {
   const bizContent = JSON.stringify(bizParams);
   const url        = `${BASE_URL}${path}?uuid=${UUID}`;
 
-  const res = await fetch(url, {
-    method:  "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "apiAccount":   API_ACCOUNT,
-      "timestamp":    String(Date.now()),
-      "digest":       headerDigest(bizContent),
-    },
-    body: new URLSearchParams({ bizContent }).toString(),
-  });
+  const controller = new AbortController();
+  const timer      = setTimeout(() => controller.abort(), timeoutMs);
 
-  const data = await res.json();
-  console.log(`[J&T] ${path}`, JSON.stringify(data).slice(0, 300));
-  return data;
+  try {
+    const res = await fetch(url, {
+      method:  "POST",
+      signal:  controller.signal,
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "apiAccount":   API_ACCOUNT,
+        "timestamp":    String(Date.now()),
+        "digest":       headerDigest(bizContent),
+      },
+      body: new URLSearchParams({ bizContent }).toString(),
+    });
+
+    const data = await res.json();
+    console.log(`[J&T] ${path}`, JSON.stringify(data).slice(0, 300));
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ── Create Order ──────────────────────────────────────────────────────────────

@@ -8,14 +8,18 @@ export async function GET(req: NextRequest) {
   const from = sp.get("from");
   const to   = sp.get("to");
 
+  // Default: last 60 days to prevent unbounded scans on large datasets
+  const defaultFrom = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+
   let query = supabaseAdmin
     .from("whatsapp_messages")
     .select("id, shopify_order_id, order_number, customer_name, phone, status, created_at")
     .neq("status", "failed")
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .limit(1000);
 
-  if (from) query = query.gte("created_at", from);
-  if (to)   query = query.lte("created_at", to);
+  query = query.gte("created_at", from ?? defaultFrom);
+  if (to) query = query.lte("created_at", to);
 
   const { data: messages, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

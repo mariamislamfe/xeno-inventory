@@ -109,11 +109,15 @@ async function fetchShopifyOrder(shopifyOrderId: number) {
   const version = process.env.SHOPIFY_API_VERSION ?? "2026-07";
   if (!shop || !token) return null;
 
+  const controller = new AbortController();
+  const timer      = setTimeout(() => controller.abort(), 10_000);
+
   try {
     const res  = await fetch(
       `https://${shop}/admin/api/${version}/orders/${shopifyOrderId}.json?fields=id,order_number,total_price,shipping_address,line_items`,
-      { headers: { "X-Shopify-Access-Token": token }, cache: "no-store" }
+      { headers: { "X-Shopify-Access-Token": token }, cache: "no-store", signal: controller.signal }
     );
+    clearTimeout(timer);
     const data = await res.json();
     const ord  = data?.order;
     if (!ord) return null;
@@ -136,6 +140,7 @@ async function fetchShopifyOrder(shopifyOrderId: number) {
       })),
     };
   } catch (e) {
+    clearTimeout(timer);
     console.error("[ship] Shopify fetch error:", e);
     return null;
   }
@@ -146,13 +151,19 @@ async function sendTrackingWA(phone: string, customerName: string, trackingNumbe
   const waSecret = process.env.WA_SECRET;
   if (!waUrl || !waSecret) return;
 
+  const controller = new AbortController();
+  const timer      = setTimeout(() => controller.abort(), 8_000);
+
   try {
     await fetch(`${waUrl}/send-tracking`, {
       method:  "POST",
+      signal:  controller.signal,
       headers: { "Content-Type": "application/json", "x-wa-secret": waSecret },
       body:    JSON.stringify({ phone, customer_name: customerName, tracking_number: trackingNumber }),
     });
   } catch (e) {
     console.error("[ship] WA tracking send error:", e);
+  } finally {
+    clearTimeout(timer);
   }
 }
