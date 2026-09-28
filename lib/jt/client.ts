@@ -98,7 +98,7 @@ export async function createJTOrder(order: JTOrderInput): Promise<JTOrderResult>
   const bizParams = {
     customerCode:         CUSTOMER_CODE,
     sign:                 orderSign(),
-    expressType:          process.env.JT_EXPRESS_TYPE ?? "EZ",
+    expressType:          process.env.JT_EXPRESS_TYPE ?? "JT",
     // J&T regional APIs differ on the field name for merchant order number
     orderCode,
     txlogisticId:         orderCode,
