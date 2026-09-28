@@ -195,17 +195,7 @@ export async function POST(req: NextRequest) {
 
     const data  = await resp.json() as { order: ShopifyOrderRaw };
     const order = normalizeOrder(data.order);
-    return NextResponse.json({
-      ok: true,
-      order,
-      _debug: {
-        shopify_has_shipping: !!data.order.shipping_address,
-        shopify_customer:     (data.order as unknown as Record<string,unknown>)?.customer ?? null,
-        shopify_email:        data.order.email,
-        shipping_city:        data.order.shipping_address?.city,
-        shipping_phone:       data.order.shipping_address?.phone,
-      },
-    }, { status: 201 });
+    return NextResponse.json({ ok: true, order }, { status: 201 });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }

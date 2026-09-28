@@ -351,10 +351,24 @@ function GlobalSearch() {
   );
 }
 
+interface CurrentUser {
+  email: string;
+  fullName: string;
+  role: string;
+}
+
 // User Profile Dropdown
 function UserProfile() {
-  const [open, setOpen] = useState(false);
+  const [open,    setOpen]    = useState(false);
+  const [profile, setProfile] = useState<CurrentUser | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { if (d?.user) setProfile(d.user); })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -366,6 +380,12 @@ function UserProfile() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
+  const initials = profile?.fullName
+    ? profile.fullName.trim()[0]
+    : "م";
+
+  const roleLabel = profile?.role === "admin" ? "مدير" : "موظف";
+
   return (
     <div className="relative" ref={ref}>
       <button
@@ -375,13 +395,13 @@ function UserProfile() {
         aria-label="قائمة المستخدم"
       >
         <div className="w-7 h-7 rounded-full bg-[var(--primary)] flex items-center justify-center text-white text-xs font-bold">
-          م
+          {initials}
         </div>
         <div className="hidden sm:block text-right">
           <p className="text-xs font-semibold text-[var(--text-primary)] leading-tight">
-            محمد الإداري
+            {profile?.fullName ?? "…"}
           </p>
-          <p className="text-[11px] text-[var(--text-muted)]">مدير</p>
+          <p className="text-[11px] text-[var(--text-muted)]">{roleLabel}</p>
         </div>
         <ChevronDown size={13} className="text-[var(--text-muted)]" />
       </button>
@@ -389,8 +409,8 @@ function UserProfile() {
       {open && (
         <div className="absolute left-0 top-full mt-1 w-52 bg-[var(--bg-card)] border border-[var(--border-color)] rounded-[var(--radius-lg)] shadow-[var(--shadow-lg)] z-50 animate-fade-in overflow-hidden">
           <div className="px-4 py-3 border-b border-[var(--border-color)]">
-            <p className="text-sm font-semibold text-[var(--text-primary)]">محمد الإداري</p>
-            <p className="text-xs text-[var(--text-muted)]">admin@xeno.com</p>
+            <p className="text-sm font-semibold text-[var(--text-primary)]">{profile?.fullName ?? "…"}</p>
+            <p className="text-xs text-[var(--text-muted)]">{profile?.email ?? ""}</p>
           </div>
           <div className="py-1">
             <Link
