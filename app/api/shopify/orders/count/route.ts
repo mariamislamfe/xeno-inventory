@@ -9,10 +9,12 @@ export async function GET(req: NextRequest) {
     const status             = sp.get("status") ?? "any";
     const financial_status   = sp.get("financial_status") ?? "";
     const fulfillment_status = sp.get("fulfillment_status") ?? "";
+    const tag                = sp.get("tag") ?? "";
 
     let qs = `status=${status}`;
     if (financial_status)   qs += `&financial_status=${financial_status}`;
     if (fulfillment_status) qs += `&fulfillment_status=${fulfillment_status}`;
+    if (tag)                qs += `&tag=${encodeURIComponent(tag)}`;
 
     const data = await shopifyFetch<{ count: number }>(`/orders/count.json?${qs}`);
     return NextResponse.json({ count: data.count });
