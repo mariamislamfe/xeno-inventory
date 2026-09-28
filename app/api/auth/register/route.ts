@@ -37,6 +37,7 @@ export async function POST(req: NextRequest) {
 
   // Upsert profile (trigger may run, but we set the name explicitly)
   if (user) {
+    // Self-registration always gets 'employee' — role can only be changed by an admin
     await supabaseAdmin.from("profiles").upsert({
       id:        user.id,
       email,

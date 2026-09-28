@@ -12,7 +12,8 @@ export async function GET(req: NextRequest) {
   let query = supabaseAdmin
     .from("xeno_ops")
     .select("*")
-    .order("updated_at", { ascending: false });
+    .order("updated_at", { ascending: false })
+    .limit(1000);
 
   if (status) query = query.eq("op_status", status);
 

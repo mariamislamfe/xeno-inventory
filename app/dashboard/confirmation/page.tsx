@@ -381,18 +381,28 @@ export default function ConfirmationPage() {
 
       const merged: OpRow[] = messages.map((m) => {
         const op = opsMap.get(m.shopify_order_id);
-        let defaultStatus: OpStatus;
-        if (m.shipped)               defaultStatus = "shipped";
-        else if (m.status === "delivered") defaultStatus = "confirmed";
-        else if (m.status === "read")      defaultStatus = "cancelled";
-        else                               defaultStatus = "pending";
+
+        // WA-derived status from the message itself
+        const waStatus: OpStatus = m.shipped
+          ? "shipped"
+          : m.status === "delivered" ? "confirmed"
+          : m.status === "read"      ? "cancelled"
+          : "pending";
+
+        // A manual op action (postponed, inquiry, confirmed/cancelled via modal)
+        // overrides WA status — UNLESS xeno_op is still "pending" (never touched manually),
+        // in which case the WA signal is more accurate.
+        const resolvedStatus: OpStatus =
+          (op?.op_status && op.op_status !== "pending")
+            ? op.op_status
+            : waStatus;
 
         return {
           ...m,
-          op_status:       op?.op_status       ?? defaultStatus,
-          postponed_until: op?.postponed_until  ?? null,
-          inquiry_type:    op?.inquiry_type     ?? null,
-          internal_note:   op?.internal_note    ?? null,
+          op_status:       resolvedStatus,
+          postponed_until: op?.postponed_until ?? null,
+          inquiry_type:    op?.inquiry_type    ?? null,
+          internal_note:   op?.internal_note   ?? null,
         };
       });
 
