@@ -110,6 +110,8 @@ export async function createJTOrder(order: JTOrderInput): Promise<JTOrderResult>
     operateType:  1,                    // 1=add, 2=modify
 
     // ── Service type ─────────────────────────────────────────────────
+    serviceType:  process.env.JT_SERVICE_TYPE ?? "02",  // 01 or 02 (required)
+    orderType:    "2",
     expressType:  "EZ",                 // only "EZ" supported for Egypt standard
     deliveryType: "04",                 // 04=home delivery (required)
 
@@ -133,6 +135,7 @@ export async function createJTOrder(order: JTOrderInput): Promise<JTOrderResult>
       prov:        process.env.XENO_PROVINCE ?? "Cairo",
       city:        process.env.XENO_CITY     ?? "Cairo",
       area:        process.env.XENO_AREA     ?? process.env.XENO_CITY ?? "Cairo",
+      address:     process.env.XENO_ADDRESS  ?? "",
       street:      process.env.XENO_ADDRESS  ?? "",
     },
 
@@ -145,7 +148,7 @@ export async function createJTOrder(order: JTOrderInput): Promise<JTOrderResult>
       prov:        order.governorate || order.city || "Cairo",
       city:        order.city        || "Cairo",
       area:        order.city        || "Cairo",
-      street:      order.address     || order.city || "",
+      address:     order.address     || order.city || "",
     },
 
     // ── Items ─────────────────────────────────────────────────────────
