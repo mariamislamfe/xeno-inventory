@@ -149,6 +149,7 @@ export async function createJTOrder(order: JTOrderInput): Promise<JTOrderResult>
       city:        order.city        || "Cairo",
       area:        order.city        || "Cairo",
       address:     order.address     || order.city || "",
+      street:      order.address     || order.city || "",
     },
 
     // ── Items ─────────────────────────────────────────────────────────
