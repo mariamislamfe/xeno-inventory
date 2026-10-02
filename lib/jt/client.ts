@@ -40,7 +40,7 @@ async function jtPost(path: string, bizParams: Record<string, unknown>, timeoutM
   if (!BASE_URL)      throw new Error("JT_BASE_URL env var is missing");
 
   const bizContent = JSON.stringify(bizParams);
-  const url        = `${BASE_URL}${path}?uuid=${UUID}`;
+  const url        = UUID ? `${BASE_URL}${path}?uuid=${UUID}` : `${BASE_URL}${path}`;
 
   const controller = new AbortController();
   const timer      = setTimeout(() => controller.abort(), timeoutMs);
@@ -122,7 +122,7 @@ export async function createJTOrder(order: JTOrderInput): Promise<JTOrderResult>
     // ── Parcel info ───────────────────────────────────────────────────
     goodsType:     process.env.JT_GOODS_TYPE ?? "ITN16", // ITN16=Others
     weight:        String(order.weightKg ?? 0.5),
-    totalQuantity: 1,                                    // must be 1 per spec
+    totalQuantity: "1",                                   // must be string "1" per spec
 
     remark: `XENO #${txlogisticId}`.slice(0, 200),
 
