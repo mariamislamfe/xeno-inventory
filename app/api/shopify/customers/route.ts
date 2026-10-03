@@ -8,9 +8,7 @@ const SHOP    = process.env.SHOPIFY_SHOP!;
 const TOKEN   = process.env.SHOPIFY_ACCESS_TOKEN!;
 const VERSION = process.env.SHOPIFY_API_VERSION ?? "2026-07";
 
-function shopifyHeaders() {
-  return { "X-Shopify-Access-Token": TOKEN };
-}
+function h() { return { "X-Shopify-Access-Token": TOKEN }; }
 
 // Normalize Egyptian phone → E.164 (+20...)
 function normalizePhone(raw: string): string {
@@ -21,34 +19,51 @@ function normalizePhone(raw: string): string {
   return raw;
 }
 
-// Detect search intent
-function detectQueryType(q: string): "order" | "phone" | "text" {
-  const trimmed = q.trim();
-  if (/^#?\d{3,6}$/.test(trimmed)) return "order";         // #1001 or 1001
-  if (/^[\d\s\-+()]{7,}$/.test(trimmed)) return "phone";   // phone-like
-  return "text";
-}
+function isPhone(q: string)       { return /^[\d\s\-+()]{7,}$/.test(q.trim()); }
+function isOrderNum(q: string)    { return /^#?\d{3,6}$/.test(q.trim()); }
 
 // Search by order number → return matching customer(s)
-async function searchByOrderNumber(orderName: string): Promise<ShopifyCustomerRaw[]> {
-  const name = orderName.startsWith("#") ? orderName : `#${orderName}`;
-  const url  = `https://${SHOP}/admin/api/${VERSION}/orders.json?name=${encodeURIComponent(name)}&status=any&limit=5`;
-  const resp = await fetch(url, { headers: shopifyHeaders() });
+async function searchByOrderNumber(raw: string): Promise<ShopifyCustomerRaw[]> {
+  const name = raw.startsWith("#") ? raw : `#${raw}`;
+  const resp = await fetch(
+    `https://${SHOP}/admin/api/${VERSION}/orders.json?name=${encodeURIComponent(name)}&status=any&limit=5`,
+    { headers: h() }
+  );
   if (!resp.ok) return [];
-
   const data = await resp.json() as { orders: { customer?: { id: number } }[] };
-  const customerIds = [...new Set(
-    data.orders.map(o => o.customer?.id).filter(Boolean) as number[]
-  )];
-
-  const results = await Promise.all(customerIds.map(async (id) => {
-    const r = await fetch(`https://${SHOP}/admin/api/${VERSION}/customers/${id}.json`, { headers: shopifyHeaders() });
+  const ids   = [...new Set(data.orders.map(o => o.customer?.id).filter(Boolean) as number[])];
+  const rows  = await Promise.all(ids.map(async id => {
+    const r = await fetch(`https://${SHOP}/admin/api/${VERSION}/customers/${id}.json`, { headers: h() });
     if (!r.ok) return null;
     const d = await r.json() as { customer: ShopifyCustomerRaw };
     return d.customer;
   }));
+  return rows.filter(Boolean) as ShopifyCustomerRaw[];
+}
 
-  return results.filter(Boolean) as ShopifyCustomerRaw[];
+// Real customer search using Shopify's dedicated search endpoint
+async function searchCustomers(rawQuery: string, limit: number): Promise<{ customers: ShopifyCustomerRaw[]; nextPageInfo: string | null }> {
+  // Build the search query for Shopify's search.json
+  let query: string;
+  if (isPhone(rawQuery)) {
+    // Try both normalized E.164 and raw — phone:VALUE format
+    query = `phone:${normalizePhone(rawQuery)}`;
+  } else {
+    // Name / email free text — Shopify search.json supports Arabic names
+    query = rawQuery;
+  }
+
+  const url  = `https://${SHOP}/admin/api/${VERSION}/customers/search.json?query=${encodeURIComponent(query)}&limit=${limit}&order=${encodeURIComponent("updated_at DESC")}`;
+  const resp = await fetch(url, { headers: h(), cache: "no-store" });
+
+  if (!resp.ok) return { customers: [], nextPageInfo: null };
+
+  const linkHeader  = resp.headers.get("Link") ?? "";
+  const nextMatch   = linkHeader.match(/<[^>]*[?&]page_info=([^&>]+)[^>]*>;\s*rel="next"/);
+  const nextPageInfo = nextMatch ? decodeURIComponent(nextMatch[1]) : null;
+
+  const data = await resp.json() as { customers: ShopifyCustomerRaw[] };
+  return { customers: data.customers ?? [], nextPageInfo };
 }
 
 export async function GET(req: NextRequest) {
@@ -59,44 +74,43 @@ export async function GET(req: NextRequest) {
     const page_info = sp.get("page_info") ?? "";
 
     // ── Order number search ──────────────────────────────────────────────
-    if (rawQuery && detectQueryType(rawQuery) === "order") {
+    if (rawQuery && isOrderNum(rawQuery)) {
       const customers = await searchByOrderNumber(rawQuery);
       return NextResponse.json({ customers: customers.map(normalizeCustomer), count: customers.length, has_more: false, next_page_info: null });
     }
 
-    // ── Build Shopify query string ───────────────────────────────────────
-    let shopifyQuery = "";
+    // ── Real search via customers/search.json ────────────────────────────
     if (rawQuery) {
-      const qType = detectQueryType(rawQuery);
-      if (qType === "phone") {
-        shopifyQuery = `phone:${normalizePhone(rawQuery)}`;
-      } else {
-        shopifyQuery = rawQuery; // name / email — pass as-is
-      }
+      const { customers, nextPageInfo } = await searchCustomers(rawQuery, limit);
+      return NextResponse.json({
+        customers:      customers.map(normalizeCustomer),
+        count:          customers.length,
+        has_more:       Boolean(nextPageInfo),
+        next_page_info: nextPageInfo,
+      });
     }
 
+    // ── Initial listing (no search) via customers.json ───────────────────
     let qs: string;
     if (page_info) {
       qs = `limit=${limit}&page_info=${encodeURIComponent(page_info)}`;
     } else {
       qs = `limit=${limit}&order=${encodeURIComponent("updated_at DESC")}`;
-      if (shopifyQuery) qs += `&query=${encodeURIComponent(shopifyQuery)}`;
     }
 
     const url  = `https://${SHOP}/admin/api/${VERSION}/customers.json?${qs}`;
-    const resp = await fetch(url, { headers: shopifyHeaders(), cache: "no-store" });
+    const resp = await fetch(url, { headers: h(), cache: "no-store" });
 
     if (!resp.ok) {
       const text = await resp.text();
       return NextResponse.json({ error: text }, { status: resp.status });
     }
 
-    const linkHeader = resp.headers.get("Link") ?? "";
-    let nextPageInfo: string | null = null;
-    const nextMatch  = linkHeader.match(/<[^>]*[?&]page_info=([^&>]+)[^>]*>;\s*rel="next"/);
-    if (nextMatch) nextPageInfo = decodeURIComponent(nextMatch[1]);
+    const linkHeader  = resp.headers.get("Link") ?? "";
+    const nextMatch   = linkHeader.match(/<[^>]*[?&]page_info=([^&>]+)[^>]*>;\s*rel="next"/);
+    const nextPageInfo = nextMatch ? decodeURIComponent(nextMatch[1]) : null;
 
-    const data      = (await resp.json()) as { customers: ShopifyCustomerRaw[] };
+    const data      = await resp.json() as { customers: ShopifyCustomerRaw[] };
     const customers = data.customers.map(normalizeCustomer);
 
     return NextResponse.json({ customers, count: customers.length, has_more: Boolean(nextPageInfo), next_page_info: nextPageInfo });
