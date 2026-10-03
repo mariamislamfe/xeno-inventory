@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { normalizeOrder } from "@/lib/shopify/orders";
-import type { ShopifyOrderRaw } from "@/lib/shopify/orders";
+import type { ShopifyOrderRaw, XenoOrder } from "@/lib/shopify/orders";
 
 const SHOP    = process.env.SHOPIFY_SHOP;
 const TOKEN   = process.env.SHOPIFY_ACCESS_TOKEN;
@@ -153,6 +153,21 @@ export async function POST(req: NextRequest) {
 
     const customerId  = await resolveCustomerId(SHOP, TOKEN, VERSION, firstName, lastName, phone);
 
+    // Check for existing open orders for this customer BEFORE creating the new one
+    let existingOpenOrders: XenoOrder[] = [];
+    if (customerId) {
+      try {
+        const chk = await fetch(
+          `https://${SHOP}/admin/api/${VERSION}/orders.json?customer_id=${customerId}&status=open&limit=10`,
+          { headers: { "X-Shopify-Access-Token": TOKEN } },
+        );
+        if (chk.ok) {
+          const chkData = await chk.json() as { orders: ShopifyOrderRaw[] };
+          existingOpenOrders = chkData.orders.map(normalizeOrder);
+        }
+      } catch { /* ignore */ }
+    }
+
     // Fallback email derived from phone so Shopify always links a customer
     const digits      = phone.replace(/[^0-9]/g, "");
     const fallbackEmail = `${digits}@xeno-orders.com`;
@@ -207,7 +222,7 @@ export async function POST(req: NextRequest) {
 
     const data  = await resp.json() as { order: ShopifyOrderRaw };
     const order = normalizeOrder(data.order);
-    return NextResponse.json({ ok: true, order, shopifyCustomerId: data.order.customer?.id ?? null }, { status: 201 });
+    return NextResponse.json({ ok: true, order, existingOpenOrders }, { status: 201 });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }
