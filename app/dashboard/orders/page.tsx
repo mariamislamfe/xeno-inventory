@@ -136,6 +136,18 @@ function GovPicker({ value, onChange }: { value: string; onChange: (v: string) =
 // ── Create Order Modal ─────────────────────────────────────────────────
 interface NewOrderItem { title: string; variantId?: number; qty: number; price: number }
 
+const GOV_EN: Record<string, string> = {
+  "القاهرة":"Cairo","الإسكندرية":"Alexandria","الجيزة":"Giza",
+  "الشرقية":"Sharqia","الدقهلية":"Dakahlia","البحيرة":"Beheira",
+  "المنوفية":"Monufia","الغربية":"Gharbia","كفر الشيخ":"Kafr el-Sheikh",
+  "الإسماعيلية":"Ismailia","بورسعيد":"Port Said","السويس":"Suez",
+  "شمال سيناء":"North Sinai","جنوب سيناء":"South Sinai","الفيوم":"Faiyum",
+  "بني سويف":"Beni Suef","المنيا":"Minya","أسيوط":"Asyut",
+  "سوهاج":"Sohag","قنا":"Qena","الأقصر":"Luxor","أسوان":"Aswan",
+  "البحر الأحمر":"Red Sea","الوادي الجديد":"New Valley","مطروح":"Matruh",
+  "دمياط":"Damietta","القليوبية":"Qalyubia",
+};
+
 function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (o: XenoOrder) => void }) {
   const [name,          setName]          = useState("");
   const [phone,         setPhone]         = useState("");
@@ -171,7 +183,9 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
     shippingTimer.current = setTimeout(async () => {
       setLoadingShip(true);
       try {
-        const res  = await fetch(`/api/shopify/shipping-rates?province=${encodeURIComponent(province)}&total=${total}`);
+        // Shopify stores province names in English — convert from Arabic
+        const provEn = GOV_EN[province] ?? province;
+        const res  = await fetch(`/api/shopify/shipping-rates?province=${encodeURIComponent(provEn)}&total=${total}`);
         const data = await res.json();
         setShippingCost(data.rate ?? 0);
         if (data.title) setShippingTitle(data.title);
