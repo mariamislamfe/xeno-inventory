@@ -151,26 +151,36 @@ export async function POST(req: NextRequest) {
     const firstName   = nameParts[0] ?? customerName;
     const lastName    = nameParts.slice(1).join(" ") || "";
 
+    // Compute phone-based identifiers early (used for both dup-check and order creation)
+    const digits        = phone.replace(/[^0-9]/g, "");
+    const fallbackEmail = `${digits}@xeno-orders.com`;
+
     const customerId  = await resolveCustomerId(SHOP, TOKEN, VERSION, firstName, lastName, phone);
 
-    // Check for existing open orders for this customer BEFORE creating the new one
+    // Check for existing open orders BEFORE creating — try two independent methods so
+    // at least one will succeed even if resolveCustomerId returned null.
+    const seen = new Set<number>();
     let existingOpenOrders: XenoOrder[] = [];
-    if (customerId) {
+
+    async function fetchOpenOrders(qs: string) {
       try {
-        const chk = await fetch(
-          `https://${SHOP}/admin/api/${VERSION}/orders.json?customer_id=${customerId}&status=open&limit=10`,
-          { headers: { "X-Shopify-Access-Token": TOKEN } },
+        const r = await fetch(
+          `https://${SHOP}/admin/api/${VERSION}/orders.json?${qs}&status=open&limit=10`,
+          { headers: { "X-Shopify-Access-Token": TOKEN as string } },
         );
-        if (chk.ok) {
-          const chkData = await chk.json() as { orders: ShopifyOrderRaw[] };
-          existingOpenOrders = chkData.orders.map(normalizeOrder);
+        if (!r.ok) return;
+        const d = await r.json() as { orders: ShopifyOrderRaw[] };
+        for (const o of d.orders ?? []) {
+          if (!seen.has(o.id)) { seen.add(o.id); existingOpenOrders.push(normalizeOrder(o)); }
         }
       } catch { /* ignore */ }
     }
 
-    // Fallback email derived from phone so Shopify always links a customer
-    const digits      = phone.replace(/[^0-9]/g, "");
-    const fallbackEmail = `${digits}@xeno-orders.com`;
+    // Method 1: by customer_id (works when resolveCustomerId succeeds)
+    if (customerId) await fetchOpenOrders(`customer_id=${customerId}`);
+
+    // Method 2: by fallback email we stamp on every modal-created order
+    await fetchOpenOrders(`email=${encodeURIComponent(fallbackEmail)}`);
 
     const addrBlock = {
       first_name:   firstName,
