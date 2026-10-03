@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import Link from "next/link";
 import { RefreshCw, Eye, Printer, Truck, Loader2, Search, ChevronDown, Tag, X, Plus, Save, CheckCircle2, XCircle, Merge } from "lucide-react";
 import { Button } from "@/components/ui/Button";
@@ -433,6 +433,75 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
   );
 }
 
+// ── Merge Orders Modal (for existing orders detected on the page) ──────
+function MergeModal({ orders, open, onClose, onMerged }: {
+  orders: XenoOrder[];
+  open: boolean;
+  onClose: () => void;
+  onMerged: (newOrder: XenoOrder, removedIds: string[]) => void;
+}) {
+  const [merging, setMerging] = useState(false);
+  const { success, error } = useToast();
+
+  async function handleMerge() {
+    setMerging(true);
+    try {
+      const res = await fetch("/api/shopify/orders/merge", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ shopifyIds: orders.map(o => o.shopifyId) }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error ?? "فشل الدمج");
+      success("تم الدمج", `طلب مدموج: ${data.order.orderNumber}`);
+      onMerged(data.order, orders.map(o => o.id));
+      onClose();
+    } catch (err) {
+      error("خطأ", String(err));
+    } finally {
+      setMerging(false);
+    }
+  }
+
+  const grandTotal = orders.reduce((s, o) => s + o.total, 0);
+
+  return (
+    <Modal open={open} onClose={merging ? () => {} : onClose} title="دمج الطلبات المكررة" size="md"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={merging}>إلغاء</Button>
+          <Button variant="primary" onClick={handleMerge} loading={merging} icon={<Merge size={14} />}>
+            دمج في طلب واحد
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <p className="text-xs text-[var(--text-muted)]">سيتم دمج الطلبات في طلب جديد وإلغاء الأصلية تلقائياً.</p>
+        <div className="space-y-2">
+          {orders.map(o => (
+            <div key={o.id} className="border border-[var(--border-color)] rounded-md p-3">
+              <div className="flex justify-between items-center mb-1">
+                <span className="font-mono text-xs font-bold text-[var(--primary)]">{o.orderNumber}</span>
+                <span className="text-xs font-bold" dir="ltr">{o.total.toLocaleString("en-US")} ج.م</span>
+              </div>
+              {o.items.map(item => (
+                <p key={item.id} className="text-[11px] text-[var(--text-muted)]">
+                  {item.productName}{item.variant ? ` · ${item.variant}` : ""} × {item.quantity}
+                </p>
+              ))}
+            </div>
+          ))}
+        </div>
+        <div className="flex justify-between text-xs font-bold text-[var(--primary)] border-t border-[var(--border-color)] pt-2">
+          <span>الإجمالي الكلي</span>
+          <span dir="ltr">{grandTotal.toLocaleString("en-US")} ج.م</span>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 // ── Status display ─────────────────────────────────────────────────────
 const STATUS_DISPLAY: Record<string, { label: string; variant: "success" | "warning" | "danger" | "info" | "neutral" }> = {
   pending:    { label: "جديد",    variant: "warning" },
@@ -517,6 +586,7 @@ export default function OrdersPage() {
   const [createOpen,  setCreateOpen]  = useState(false);
   const [updatingId,  setUpdatingId]  = useState<string | null>(null);
   const [statusMenuId,setStatusMenuId]= useState<string | null>(null);
+  const [mergeOrders, setMergeOrders] = useState<XenoOrder[] | null>(null);
   // Pagination
   const [pageSize,    setPageSize]    = useState(50);
   const [currentPage, setCurrentPage] = useState(1);
@@ -527,6 +597,21 @@ export default function OrdersPage() {
   const { success, error } = useToast();
 
   const totalPages = totalCount != null ? Math.max(1, Math.ceil(totalCount / pageSize)) : null;
+
+  // Detect mergeable groups on the currently loaded page: same phone, all open/pending
+  const mergeGroups = useMemo(() => {
+    const groups = new Map<string, XenoOrder[]>();
+    for (const o of orders) {
+      if (o.status !== "pending" && o.status !== "processing") continue;
+      const key = o.customerPhone.replace(/[^0-9]/g, "");
+      if (!key) continue;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(o);
+    }
+    const result = new Map<string, XenoOrder[]>();
+    for (const [k, v] of groups) if (v.length >= 2) result.set(k, v);
+    return result;
+  }, [orders]);
 
   async function updateOrderStatus(order: XenoOrder, action: "fulfill" | "cancel") {
     setUpdatingId(order.id);
@@ -665,6 +750,20 @@ export default function OrdersPage() {
         onCreated={(newOrder) => { setOrders((prev) => [newOrder, ...prev]); setTotalCount((c) => (c ?? 0) + 1); }}
       />
 
+      {/* Merge Orders Modal */}
+      {mergeOrders && (
+        <MergeModal
+          orders={mergeOrders}
+          open={true}
+          onClose={() => setMergeOrders(null)}
+          onMerged={(newOrder, removedIds) => {
+            setOrders((prev) => [newOrder, ...prev.filter(o => !removedIds.includes(o.id))]);
+            setTotalCount((c) => c != null ? c - (removedIds.length - 1) : null);
+            setMergeOrders(null);
+          }}
+        />
+      )}
+
       {/* Filter Tabs */}
       <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
         {TABS.map((tab) => {
@@ -754,9 +853,14 @@ export default function OrdersPage() {
                     return (
                       <tr key={order.id}>
                         <td>
-                          <Link href={`/dashboard/orders/${order.id}`} className="font-mono text-[var(--primary)] font-bold text-xs hover:underline">
-                            {order.orderNumber}
-                          </Link>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <Link href={`/dashboard/orders/${order.id}`} className="font-mono text-[var(--primary)] font-bold text-xs hover:underline">
+                              {order.orderNumber}
+                            </Link>
+                            {mergeGroups.has(order.customerPhone.replace(/[^0-9]/g, "")) && (
+                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-yellow-100 text-yellow-700 whitespace-nowrap">مكرر</span>
+                            )}
+                          </div>
                         </td>
                         <td>
                           <div>
@@ -880,6 +984,19 @@ export default function OrdersPage() {
                                 </Link>
                               )
                             )}
+                            {(() => {
+                              const key   = order.customerPhone.replace(/[^0-9]/g, "");
+                              const group = mergeGroups.get(key);
+                              return group ? (
+                                <button
+                                  onClick={() => setMergeOrders(group)}
+                                  className="p-1.5 rounded-[var(--radius-sm)] text-yellow-600 hover:bg-yellow-50 transition-colors"
+                                  title="دمج الطلبات المكررة"
+                                >
+                                  <Merge size={14} />
+                                </button>
+                              ) : null;
+                            })()}
                           </div>
                         </td>
                       </tr>
