@@ -32,12 +32,15 @@ export async function GET(req: NextRequest) {
     const data = await resp.json() as { shipping_zones: ShopifyZone[] };
     const zones = data.shipping_zones ?? [];
 
+    console.log(`[shipping-rates] province="${province}" total=${orderTotal} zones=${zones.length} zone_names=${zones.map(z=>z.name).join(",")}`);
+
     // Find zones that cover Egypt (with or without province-level restriction)
     const egyptZones = zones.filter((z) =>
       z.countries.some((c) => c.code === "EG")
     );
 
-    if (!egyptZones.length) return NextResponse.json({ rate: 0, title: "" });
+    console.log(`[shipping-rates] egypt zones=${egyptZones.length}`);
+    if (!egyptZones.length) return NextResponse.json({ rate: 0, title: "", debug: "no_egypt_zone" });
 
     // Try to find a zone that specifically targets this province
     // If province-level zone exists, prefer it over the general Egypt zone
@@ -67,7 +70,8 @@ export async function GET(req: NextRequest) {
     }
     if (!applicableRate && rates.length) applicableRate = rates[0];
 
-    if (!applicableRate) return NextResponse.json({ rate: 0, title: "" });
+    console.log(`[shipping-rates] bestZone="${bestZone?.name}" rates=${rates.length} applicable="${applicableRate?.name}" price="${applicableRate?.price}"`);
+    if (!applicableRate) return NextResponse.json({ rate: 0, title: "", debug: "no_rate_match" });
 
     return NextResponse.json({
       rate:  parseFloat(applicableRate.price),
