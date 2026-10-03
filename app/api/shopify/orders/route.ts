@@ -194,8 +194,15 @@ export async function POST(req: NextRequest) {
       country_code: "EG",
     };
 
+    // When we have a customerId, don't set email on the order — Shopify would try to
+    // update that customer's email to fallbackEmail, which fails if another customer
+    // already owns it (e.g. a ghost customer created on a previous failed attempt).
+    // The customer_id link is enough; fallbackEmail is only needed for the email-based
+    // dup-check path when customerId is null.
+    const orderEmail = customerId ? undefined : fallbackEmail;
+
     const shopifyOrder: Record<string, unknown> = {
-      email:            fallbackEmail,
+      ...(orderEmail ? { email: orderEmail } : {}),
       financial_status: "pending",
       send_receipt:     false,
       send_fulfillment_receipt: false,
