@@ -71,7 +71,7 @@ const GOV_EN: Record<string, string> = {
   "القاهرة":       "Cairo",
   "الإسكندرية":    "Alexandria",
   "الجيزة":        "Giza",
-  "الشرقية":       "Sharqia",
+  "الشرقية":       "Al Sharqia",
   "الدقهلية":      "Dakahlia",
   "البحيرة":       "Beheira",
   "المنوفية":      "Monufia",
@@ -92,7 +92,7 @@ const GOV_EN: Record<string, string> = {
   "أسوان":         "Aswan",
   "البحر الأحمر":  "Red Sea",
   "الوادي الجديد": "New Valley",
-  "مطروح":         "Matruh",
+  "مطروح":         "Matrouh",
   "دمياط":         "Damietta",
   "القليوبية":     "Qalyubia",
 };

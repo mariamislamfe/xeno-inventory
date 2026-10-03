@@ -138,13 +138,13 @@ interface NewOrderItem { title: string; variantId?: number; qty: number; price: 
 
 const GOV_EN: Record<string, string> = {
   "القاهرة":"Cairo","الإسكندرية":"Alexandria","الجيزة":"Giza",
-  "الشرقية":"Sharqia","الدقهلية":"Dakahlia","البحيرة":"Beheira",
+  "الشرقية":"Al Sharqia","الدقهلية":"Dakahlia","البحيرة":"Beheira",
   "المنوفية":"Monufia","الغربية":"Gharbia","كفر الشيخ":"Kafr el-Sheikh",
   "الإسماعيلية":"Ismailia","بورسعيد":"Port Said","السويس":"Suez",
   "شمال سيناء":"North Sinai","جنوب سيناء":"South Sinai","الفيوم":"Faiyum",
   "بني سويف":"Beni Suef","المنيا":"Minya","أسيوط":"Asyut",
   "سوهاج":"Sohag","قنا":"Qena","الأقصر":"Luxor","أسوان":"Aswan",
-  "البحر الأحمر":"Red Sea","الوادي الجديد":"New Valley","مطروح":"Matruh",
+  "البحر الأحمر":"Red Sea","الوادي الجديد":"New Valley","مطروح":"Matrouh",
   "دمياط":"Damietta","القليوبية":"Qalyubia",
 };
 
