@@ -4,28 +4,16 @@ const SHOP    = process.env.SHOPIFY_SHOP;
 const TOKEN   = process.env.SHOPIFY_ACCESS_TOKEN;
 const VERSION = process.env.SHOPIFY_API_VERSION ?? "2026-07";
 
-// Fallback rates when Shopify has no shipping zones configured.
-// Override via env vars: DEFAULT_SHIPPING_COST / DEFAULT_SHIPPING_TITLE
-// or per-governorate: SHIPPING_CAIRO=45, SHIPPING_OTHER=70
 const DEFAULT_COST  = parseFloat(process.env.DEFAULT_SHIPPING_COST  ?? "0");
 const DEFAULT_TITLE = process.env.DEFAULT_SHIPPING_TITLE ?? "الشحن";
 
-// Per-governorate overrides (English province names from Shopify)
-const PROVINCE_RATES: Record<string, number> = {
-  Cairo:         parseFloat(process.env.SHIPPING_CAIRO       ?? String(DEFAULT_COST)),
-  Giza:          parseFloat(process.env.SHIPPING_GIZA        ?? String(DEFAULT_COST)),
-  Alexandria:    parseFloat(process.env.SHIPPING_ALEX        ?? String(DEFAULT_COST)),
-  Qalyubia:      parseFloat(process.env.SHIPPING_QALYUBIA    ?? String(DEFAULT_COST)),
-};
-
-function fallbackRate(province: string): { rate: number; title: string } {
-  const specific = PROVINCE_RATES[province];
-  if (specific != null && specific > 0) return { rate: specific, title: DEFAULT_TITLE };
-  if (DEFAULT_COST > 0)                 return { rate: DEFAULT_COST, title: DEFAULT_TITLE };
-  return { rate: 0, title: "" };
+// Extract price from zone name e.g. "60EGP" → 60, "90EGP" → 90
+function priceFromZoneName(name: string): number {
+  const m = name.match(/(\d+)/);
+  return m ? parseInt(m[1], 10) : 0;
 }
 
-interface ShopifyProvince  { code: string; name: string; shipping_zone_id: number }
+interface ShopifyProvince  { code: string; name: string }
 interface ShopifyCountry   { code: string; provinces: ShopifyProvince[] }
 interface ShopifyPriceRate { name: string; price: string; min_order_subtotal: string | null; max_order_subtotal: string | null }
 interface ShopifyZone {
@@ -35,76 +23,87 @@ interface ShopifyZone {
   price_based_shipping_rates: ShopifyPriceRate[];
 }
 
-export const revalidate = 300; // cache 5 min
+export const revalidate = 300;
 
 export async function GET(req: NextRequest) {
   const province   = req.nextUrl.searchParams.get("province") ?? "";
   const orderTotal = parseFloat(req.nextUrl.searchParams.get("total") ?? "0");
 
-  // No Shopify credentials — return env-var fallback directly
-  if (!SHOP || !TOKEN) return NextResponse.json(fallbackRate(province));
+  if (!SHOP || !TOKEN) {
+    return NextResponse.json({ rate: DEFAULT_COST, title: DEFAULT_TITLE });
+  }
 
   try {
     const resp = await fetch(
       `https://${SHOP}/admin/api/${VERSION}/shipping_zones.json`,
       { headers: { "X-Shopify-Access-Token": TOKEN }, cache: "no-store" }
     );
-
     if (!resp.ok) {
-      console.warn(`[shipping-rates] Shopify zones error ${resp.status}`);
-      return NextResponse.json(fallbackRate(province));
+      return NextResponse.json({ rate: DEFAULT_COST, title: DEFAULT_TITLE });
     }
 
     const data  = await resp.json() as { shipping_zones: ShopifyZone[] };
     const zones = data.shipping_zones ?? [];
 
-    console.log(`[shipping-rates] province="${province}" total=${orderTotal} zones=${zones.length} names=${zones.map(z => z.name).join(",")}`);
-
-    // Find zone(s) covering Egypt
+    // Find zones covering Egypt
     const egyptZones = zones.filter((z) => z.countries.some((c) => c.code === "EG"));
-
     if (!egyptZones.length) {
-      console.warn("[shipping-rates] no Egypt zone — using fallback");
-      return NextResponse.json({ ...fallbackRate(province), source: "fallback" });
+      return NextResponse.json({ rate: DEFAULT_COST, title: DEFAULT_TITLE });
     }
 
-    // Prefer province-specific zone, then whole-country zone
-    let bestZone: ShopifyZone | null = null;
+    // Find which zone covers the requested province
+    let matchedZone: ShopifyZone | null = null;
+    let fallbackZone: ShopifyZone | null = null;
+
     for (const zone of egyptZones) {
       const egypt = zone.countries.find((c) => c.code === "EG");
       if (!egypt) continue;
-      const hasProvince = egypt.provinces.some(
+
+      if (egypt.provinces.length === 0) {
+        // Whole-country zone
+        if (!fallbackZone) fallbackZone = zone;
+        continue;
+      }
+
+      const hit = egypt.provinces.some(
         (p) => p.name.toLowerCase() === province.toLowerCase()
       );
-      if (hasProvince)                       { bestZone = zone; break; }
-      if (!egypt.provinces.length && !bestZone) bestZone = zone;
+      if (hit) { matchedZone = zone; break; }
     }
-    if (!bestZone) bestZone = egyptZones[0];
 
-    // Find price-based rate matching the order total
+    const bestZone = matchedZone ?? fallbackZone ?? egyptZones[0];
+
+    // Try price_based_shipping_rates first
     const rates = bestZone.price_based_shipping_rates ?? [];
-    let applicableRate: ShopifyPriceRate | null = null;
-    for (const r of rates) {
-      const min = r.min_order_subtotal != null ? parseFloat(r.min_order_subtotal) : 0;
-      const max = r.max_order_subtotal != null ? parseFloat(r.max_order_subtotal) : Infinity;
-      if (orderTotal >= min && orderTotal <= max) { applicableRate = r; break; }
+    let ratePrice = 0;
+    let rateTitle = DEFAULT_TITLE;
+
+    if (rates.length > 0) {
+      let match: ShopifyPriceRate | null = null;
+      for (const r of rates) {
+        const min = r.min_order_subtotal != null ? parseFloat(r.min_order_subtotal) : 0;
+        const max = r.max_order_subtotal != null ? parseFloat(r.max_order_subtotal) : Infinity;
+        if (orderTotal >= min && orderTotal <= max) { match = r; break; }
+      }
+      if (!match) match = rates[0];
+      ratePrice = parseFloat(match.price);
+      rateTitle = match.name;
+    } else {
+      // Rates not configured in Shopify — extract from zone name (e.g. "60EGP" → 60)
+      ratePrice = priceFromZoneName(bestZone.name);
+      rateTitle = DEFAULT_TITLE;
     }
-    if (!applicableRate && rates.length) applicableRate = rates[0];
 
-    console.log(`[shipping-rates] zone="${bestZone.name}" rates=${rates.length} match="${applicableRate?.name}" price="${applicableRate?.price}"`);
-
-    if (!applicableRate) {
-      console.warn("[shipping-rates] no price rate in zone — using fallback");
-      return NextResponse.json({ ...fallbackRate(province), source: "fallback" });
+    // Final fallback to env var if still zero
+    if (ratePrice === 0 && DEFAULT_COST > 0) {
+      ratePrice = DEFAULT_COST;
     }
 
-    return NextResponse.json({
-      rate:   parseFloat(applicableRate.price),
-      title:  applicableRate.name,
-      source: "shopify",
-    });
+    console.log(`[shipping-rates] province="${province}" zone="${bestZone.name}" rate=${ratePrice}`);
+
+    return NextResponse.json({ rate: ratePrice, title: rateTitle });
   } catch (err) {
-    console.error("[shipping-rates] error:", err);
-    return NextResponse.json(fallbackRate(province));
+    console.error("[shipping-rates]", err);
+    return NextResponse.json({ rate: DEFAULT_COST, title: DEFAULT_TITLE });
   }
 }
