@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import Link from "next/link";
 import { RefreshCw, Eye, Printer, Truck, Loader2, Search, ChevronDown, Tag, X, Plus, Save, CheckCircle2, XCircle, Merge } from "lucide-react";
+import { getCities, getAreas, EG_PROVINCES } from "@/lib/data/egypt-divisions";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { Badge } from "@/components/ui/Badge";
@@ -91,47 +92,69 @@ function ProductPicker({ onSelect }: { onSelect: (title: string, variantTitle: s
   );
 }
 
-// ── Egyptian Governorates ───────────────────────────────────────────────
-const EG_GOVS = [
-  "القاهرة","الإسكندرية","الجيزة","الشرقية","الدقهلية","البحيرة","المنوفية",
-  "الغربية","كفر الشيخ","الإسماعيلية","بورسعيد","السويس","شمال سيناء",
-  "جنوب سيناء","الفيوم","بني سويف","المنيا","أسيوط","سوهاج","قنا","الأقصر",
-  "أسوان","البحر الأحمر","الوادي الجديد","مطروح","دمياط","القليوبية",
-];
+// ── 3-level Egyptian Address Picker ────────────────────────────────────
+interface AddressPickerProps {
+  province: string; city: string; area: string;
+  onProvinceChange: (v: string) => void;
+  onCityChange: (v: string) => void;
+  onAreaChange: (v: string) => void;
+}
 
-function GovPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const filtered = value.trim()
-    ? EG_GOVS.filter((g) => g.includes(value.trim()))
-    : EG_GOVS;
+function AddressPicker({ province, city, area, onProvinceChange, onCityChange, onAreaChange }: AddressPickerProps) {
+  const cities = province ? getCities(province) : [];
+  const areas  = (province && city) ? getAreas(province, city) : [];
+
+  function handleProvinceChange(v: string) {
+    onProvinceChange(v);
+    onCityChange("");
+    onAreaChange("");
+  }
+  function handleCityChange(v: string) {
+    onCityChange(v);
+    onAreaChange("");
+  }
+
   return (
-    <div className="relative">
-      <input
-        value={value}
-        onChange={(e) => { onChange(e.target.value); setOpen(true); }}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setTimeout(() => setOpen(false), 150)}
-        className="form-input"
-        placeholder="اكتب لتصفية المحافظات..."
-        autoComplete="off"
-      />
-      {open && filtered.length > 0 && (
-        <div className="absolute z-50 top-full right-0 left-0 mt-1 bg-[var(--bg-card)] border border-[var(--border-color)] rounded-[var(--radius-md)] shadow-xl max-h-48 overflow-y-auto">
-          {filtered.map((g) => (
-            <button
-              key={g}
-              type="button"
-              onMouseDown={() => { onChange(g); setOpen(false); }}
-              className="w-full text-right px-3 py-2 text-xs hover:bg-[var(--bg-base)] transition-colors"
-            >
-              {g}
-            </button>
-          ))}
-        </div>
-      )}
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:col-span-2">
+      <div>
+        <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">المحافظة *</label>
+        <select
+          value={province}
+          onChange={(e) => handleProvinceChange(e.target.value)}
+          className="form-input appearance-none"
+        >
+          <option value="">— اختر المحافظة —</option>
+          {EG_PROVINCES.map((p) => <option key={p} value={p}>{p}</option>)}
+        </select>
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">المدينة *</label>
+        <select
+          value={city}
+          onChange={(e) => handleCityChange(e.target.value)}
+          className="form-input appearance-none"
+          disabled={!province}
+        >
+          <option value="">— اختر المدينة —</option>
+          {cities.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">المنطقة</label>
+        <select
+          value={area}
+          onChange={(e) => onAreaChange(e.target.value)}
+          className="form-input appearance-none"
+          disabled={!city}
+        >
+          <option value="">— اختر المنطقة —</option>
+          {areas.map((a) => <option key={a} value={a}>{a}</option>)}
+        </select>
+      </div>
     </div>
   );
 }
+
 
 // ── Create Order Modal ─────────────────────────────────────────────────
 interface NewOrderItem { title: string; variantId?: number; qty: number; price: number }
@@ -152,8 +175,9 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
   const [name,          setName]          = useState("");
   const [phone,         setPhone]         = useState("");
   const [address,       setAddress]       = useState("");
-  const [city,          setCity]          = useState("");
   const [gov,           setGov]           = useState("");
+  const [city,          setCity]          = useState("");
+  const [area,          setArea]          = useState("");
   const [note,          setNote]          = useState("");
   const [items,         setItems]         = useState<NewOrderItem[]>([]);
   const [saving,        setSaving]        = useState(false);
@@ -164,7 +188,7 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
   const { success, error } = useToast();
 
   function resetForm() {
-    setName(""); setPhone(""); setAddress(""); setCity(""); setGov(""); setNote("");
+    setName(""); setPhone(""); setAddress(""); setGov(""); setCity(""); setArea(""); setNote("");
     setItems([]); setShippingCost(0); setShippingTitle("الشحن");
   }
 
@@ -207,18 +231,29 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
 
   function handleGovChange(v: string) {
     setGov(v);
+    setCity("");
+    setArea("");
     fetchShipping(v, productTotal);
   }
 
+  function handleCityChange(v: string) {
+    setCity(v);
+    setArea("");
+    if (gov) fetchShipping(gov, productTotal);
+  }
+
   async function handleCreate() {
-    if (!name || !phone || !address || !city || !gov) { error("بيانات ناقصة", "اسم العميل والهاتف والعنوان والمدينة والمحافظة مطلوبون"); return; }
+    if (!name || !phone || !address || !gov || !city) { error("بيانات ناقصة", "اسم العميل والهاتف والعنوان والمحافظة والمدينة مطلوبون"); return; }
     if (items.length === 0) { error("لا توجد منتجات", "أضف منتجاً واحداً على الأقل"); return; }
     setSaving(true);
+    // Send city as the district/city and province as the governorate
+    // If area is selected, prepend it to address1
+    const fullAddress = area ? `${area}، ${address}` : address;
     try {
       const res = await fetch("/api/shopify/orders", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ customerName: name, phone, address1: address, city, province: gov, note, items, total: grandTotal, shippingCost, shippingTitle }),
+        body:    JSON.stringify({ customerName: name, phone, address1: fullAddress, city, province: gov, note, items, total: grandTotal, shippingCost, shippingTitle }),
       });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error ?? "فشل إنشاء الطلب");
@@ -284,17 +319,16 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
               <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">رقم الهاتف *</label>
               <input value={phone} onChange={(e) => setPhone(e.target.value)} className="form-input" dir="ltr" placeholder="01xxxxxxxxx" />
             </div>
+            {/* 3-level address picker: Province → City → Area */}
+            <AddressPicker
+              province={gov} city={city} area={area}
+              onProvinceChange={handleGovChange}
+              onCityChange={handleCityChange}
+              onAreaChange={setArea}
+            />
             <div className="sm:col-span-2">
-              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">العنوان *</label>
-              <input value={address} onChange={(e) => setAddress(e.target.value)} className="form-input" placeholder="الشارع / المنطقة" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">المدينة *</label>
-              <input value={city} onChange={(e) => setCity(e.target.value)} className="form-input" placeholder="القاهرة" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">المحافظة *</label>
-              <GovPicker value={gov} onChange={handleGovChange} />
+              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">العنوان التفصيلي (الشارع / العقار) *</label>
+              <input value={address} onChange={(e) => setAddress(e.target.value)} className="form-input" placeholder="اسم الشارع ورقم العقار" />
             </div>
           </div>
 
@@ -447,6 +481,7 @@ export default function OrdersPage() {
   const [tagFilter,   setTagFilter]   = useState("");
   const [totalCount,  setTotalCount]  = useState<number | null>(null);
   const [createOpen,  setCreateOpen]  = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [updatingId,  setUpdatingId]  = useState<string | null>(null);
   const [statusMenuId,setStatusMenuId]= useState<string | null>(null);
   // Pagination
@@ -586,6 +621,25 @@ export default function OrdersPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mergeGroups.size]);
 
+  // Clear selection whenever the data set changes
+  useEffect(() => { setSelectedIds(new Set()); }, [orders]);
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === orders.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(orders.map((o) => o.id)));
+    }
+  }
+
   function switchTab(key: TabKey) {
     setActiveTab(key);
   }
@@ -713,6 +767,21 @@ export default function OrdersPage() {
         )}
       </div>
 
+      {/* Selection bar */}
+      {selectedIds.size > 0 && (
+        <div className="card p-3 flex items-center gap-3 border-[var(--primary)] bg-(--primary-light)">
+          <span className="text-xs font-semibold text-[var(--primary)]">
+            تم تحديد {selectedIds.size} طلب
+          </span>
+          <button
+            onClick={() => setSelectedIds(new Set())}
+            className="text-xs text-[var(--text-muted)] hover:text-[var(--danger)] transition-colors"
+          >
+            إلغاء التحديد
+          </button>
+        </div>
+      )}
+
       {/* Table */}
       <div className="card">
         {loading ? (
@@ -728,6 +797,15 @@ export default function OrdersPage() {
               <table className="data-table">
                 <thead>
                   <tr>
+                    <th className="w-8 text-center">
+                      <input
+                        type="checkbox"
+                        className="rounded"
+                        checked={orders.length > 0 && selectedIds.size === orders.length}
+                        ref={(el) => { if (el) el.indeterminate = selectedIds.size > 0 && selectedIds.size < orders.length; }}
+                        onChange={toggleSelectAll}
+                      />
+                    </th>
                     <th>رقم الطلب</th>
                     <th>العميل</th>
                     <th>المنتجات</th>
@@ -745,7 +823,15 @@ export default function OrdersPage() {
                     const st = STATUS_DISPLAY[order.status] ?? { label: order.status, variant: "neutral" as const };
                     const pm = PAYMENT_DISPLAY[order.paymentStatus] ?? { label: order.paymentStatus, variant: "neutral" as const };
                     return (
-                      <tr key={order.id}>
+                      <tr key={order.id} className={selectedIds.has(order.id) ? "bg-(--primary-light)" : ""}>
+                        <td className="text-center">
+                          <input
+                            type="checkbox"
+                            className="rounded"
+                            checked={selectedIds.has(order.id)}
+                            onChange={() => toggleSelect(order.id)}
+                          />
+                        </td>
                         <td>
                           <Link href={`/dashboard/orders/${order.id}`} className="font-mono text-[var(--primary)] font-bold text-xs hover:underline">
                             {order.orderNumber}

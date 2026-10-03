@@ -33,6 +33,7 @@ export default function CustomersPage() {
   const [search,       setSearch]       = useState("");
   const [searchInput,  setSearchInput]  = useState("");
   const [statusFilter, setStatusFilter] = useState<"active" | "inactive" | "">("");
+  const [selectedIds,  setSelectedIds]  = useState<Set<string>>(new Set());
   const { success, error } = useToast();
   const searchTimer = useRef<ReturnType<typeof setTimeout>>(null);
 
@@ -69,9 +70,26 @@ export default function CustomersPage() {
   useEffect(() => {
     setCustomers([]);
     setNextPageInfo(null);
+    setSelectedIds(new Set());
     loadCustomers(search);
     fetchTotal();
   }, [search]);
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === filtered.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filtered.map((c) => c.id)));
+    }
+  }
 
   function handleSearchChange(val: string) {
     setSearchInput(val);
@@ -147,6 +165,21 @@ export default function CustomersPage() {
         </div>
       </div>
 
+      {/* Selection bar */}
+      {selectedIds.size > 0 && (
+        <div className="card p-3 flex items-center gap-3 border-[var(--primary)] bg-[var(--primary-light)]">
+          <span className="text-xs font-semibold text-[var(--primary)]">
+            تم تحديد {selectedIds.size} عميل
+          </span>
+          <button
+            onClick={() => setSelectedIds(new Set())}
+            className="text-xs text-[var(--text-muted)] hover:text-[var(--danger)] transition-colors"
+          >
+            إلغاء التحديد
+          </button>
+        </div>
+      )}
+
       {/* Table */}
       <div className="card">
         {loading ? (
@@ -162,6 +195,15 @@ export default function CustomersPage() {
               <table className="data-table">
                 <thead>
                   <tr>
+                    <th className="w-8 text-center">
+                      <input
+                        type="checkbox"
+                        className="rounded"
+                        checked={filtered.length > 0 && selectedIds.size === filtered.length}
+                        ref={(el) => { if (el) el.indeterminate = selectedIds.size > 0 && selectedIds.size < filtered.length; }}
+                        onChange={toggleSelectAll}
+                      />
+                    </th>
                     <th>العميل</th>
                     <th>الهاتف</th>
                     <th>البريد الإلكتروني</th>
@@ -175,7 +217,15 @@ export default function CustomersPage() {
                 </thead>
                 <tbody>
                   {filtered.map((customer) => (
-                    <tr key={customer.id}>
+                    <tr key={customer.id} className={selectedIds.has(customer.id) ? "bg-(--primary-light)" : ""}>
+                      <td className="text-center">
+                        <input
+                          type="checkbox"
+                          className="rounded"
+                          checked={selectedIds.has(customer.id)}
+                          onChange={() => toggleSelect(customer.id)}
+                        />
+                      </td>
                       <td>
                         <div className="flex items-center gap-3">
                           <div className="w-9 h-9 rounded-full bg-[var(--primary)] flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
