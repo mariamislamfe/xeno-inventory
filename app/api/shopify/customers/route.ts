@@ -79,7 +79,7 @@ export async function GET(req: NextRequest) {
     if (page_info) {
       qs = `limit=${limit}&page_info=${encodeURIComponent(page_info)}`;
     } else {
-      qs = `limit=${limit}&order=${encodeURIComponent("last_order_date DESC")}`;
+      qs = `limit=${limit}&order=${encodeURIComponent("updated_at DESC")}`;
       if (shopifyQuery) qs += `&query=${encodeURIComponent(shopifyQuery)}`;
     }
 
