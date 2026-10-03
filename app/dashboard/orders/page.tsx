@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { RefreshCw, Eye, Printer, Truck, Loader2, Search, ChevronDown, Tag, X, Plus, Save, CheckCircle2, XCircle, Merge } from "lucide-react";
 import { Button } from "@/components/ui/Button";
@@ -160,8 +160,19 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
   const [shippingCost,  setShippingCost]  = useState<number>(0);
   const [shippingTitle, setShippingTitle] = useState<string>("الشحن");
   const [loadingShip,   setLoadingShip]   = useState(false);
+  // Duplicate-merge step
+  const [step,          setStep]          = useState<"form" | "merge-prompt">("form");
+  const [pendingOrder,  setPendingOrder]  = useState<XenoOrder | null>(null);
+  const [dupOrders,     setDupOrders]     = useState<XenoOrder[]>([]);
+  const [merging,       setMerging]       = useState(false);
   const shippingTimer = useRef<ReturnType<typeof setTimeout>>(null);
   const { success, error } = useToast();
+
+  function resetForm() {
+    setName(""); setPhone(""); setAddress(""); setCity(""); setGov(""); setNote("");
+    setItems([]); setShippingCost(0); setShippingTitle("الشحن");
+    setStep("form"); setPendingOrder(null); setDupOrders([]);
+  }
 
   function addProductItem(title: string, variantTitle: string, sku: string, price: number, variantId: number) {
     const displayTitle = variantTitle ? `${title} — ${variantTitle}` : title;
@@ -217,11 +228,30 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
       });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error ?? "فشل إنشاء الطلب");
-      success("تم إنشاء الطلب", `رقم الطلب: ${data.order.orderNumber}`);
-      onCreated(data.order);
+
+      const newOrder: XenoOrder = data.order;
+      const cid: number | null  = data.shopifyCustomerId ?? null;
+      setPendingOrder(newOrder);
+
+      // Check for existing open orders for the same customer
+      if (cid) {
+        try {
+          const dupRes  = await fetch(`/api/shopify/orders?customer_id=${cid}&status=open&fulfillment_status=unfulfilled&limit=5`);
+          const dupData = await dupRes.json();
+          const others  = ((dupData.orders ?? []) as XenoOrder[]).filter(o => o.shopifyId !== newOrder.shopifyId);
+          if (others.length > 0) {
+            setDupOrders(others);
+            setStep("merge-prompt");
+            return; // don't close — let user decide
+          }
+        } catch { /* ignore dup-check errors */ }
+      }
+
+      // No duplicates — normal close
+      success("تم إنشاء الطلب", `رقم الطلب: ${newOrder.orderNumber}`);
+      onCreated(newOrder);
+      resetForm();
       onClose();
-      setName(""); setPhone(""); setAddress(""); setCity(""); setGov(""); setNote("");
-      setItems([]); setShippingCost(0);
     } catch (err) {
       error("خطأ", String(err));
     } finally {
@@ -229,136 +259,21 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
     }
   }
 
-  return (
-    <Modal open={open} onClose={saving ? () => {} : onClose} title="إنشاء طلب جديد" size="lg"
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose} disabled={saving}>إلغاء</Button>
-          <Button variant="primary" onClick={handleCreate} loading={saving} icon={<Save size={14} />}>
-            إنشاء الطلب على Shopify
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-4">
-        {/* Customer */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">اسم العميل *</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} className="form-input" placeholder="الاسم الكامل" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">رقم الهاتف *</label>
-            <input value={phone} onChange={(e) => setPhone(e.target.value)} className="form-input" dir="ltr" placeholder="01xxxxxxxxx" />
-          </div>
-          <div className="sm:col-span-2">
-            <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">العنوان *</label>
-            <input value={address} onChange={(e) => setAddress(e.target.value)} className="form-input" placeholder="الشارع / المنطقة" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">المدينة *</label>
-            <input value={city} onChange={(e) => setCity(e.target.value)} className="form-input" placeholder="القاهرة" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">المحافظة *</label>
-            <GovPicker value={gov} onChange={handleGovChange} />
-          </div>
-        </div>
-
-        {/* Items */}
-        <div>
-          <label className="block text-xs font-semibold text-[var(--text-secondary)] mb-2">المنتجات *</label>
-          {/* Product search */}
-          <ProductPicker onSelect={addProductItem} />
-
-          {/* Selected items */}
-          {items.length > 0 && (
-            <div className="mt-3 space-y-2">
-              {items.map((item, i) => (
-                <div key={i} className="flex items-center gap-2 bg-[var(--bg-base)] rounded-[var(--radius-md)] px-3 py-2">
-                  <span className="flex-1 text-xs text-[var(--text-primary)] truncate">{item.title}</span>
-                  <div className="flex items-center gap-1.5 flex-shrink-0">
-                    <label className="text-[10px] text-[var(--text-muted)]">كمية</label>
-                    <input type="number" min={1} value={item.qty}
-                      onChange={(e) => updateItem(i, "qty", parseInt(e.target.value) || 1)}
-                      className="form-input w-14 text-center text-xs py-1 px-1" />
-                    <label className="text-[10px] text-[var(--text-muted)]">سعر</label>
-                    <input type="number" min={0} value={item.price}
-                      onChange={(e) => updateItem(i, "price", parseFloat(e.target.value) || 0)}
-                      className="form-input w-20 text-center text-xs py-1 px-1" dir="ltr" />
-                    <span className="text-[10px] text-[var(--text-muted)]">ج.م</span>
-                    <button onClick={() => removeItem(i)} className="text-[var(--danger)] hover:opacity-80 mr-1">
-                      <X size={13} />
-                    </button>
-                  </div>
-                </div>
-              ))}
-              <div className="border-t border-[var(--border-color)] pt-2 mt-1 space-y-1">
-                <div className="flex justify-between text-xs text-[var(--text-secondary)]">
-                  <span>المنتجات</span>
-                  <span dir="ltr">{productTotal.toLocaleString("en-US")} ج.م</span>
-                </div>
-                <div className="flex justify-between text-xs text-[var(--text-secondary)]">
-                  <span>{shippingTitle || "الشحن"}</span>
-                  <span dir="ltr">
-                    {loadingShip
-                      ? <Loader2 size={12} className="inline animate-spin" />
-                      : gov
-                        ? `${shippingCost.toLocaleString("en-US")} ج.م`
-                        : "اختر المحافظة"}
-                  </span>
-                </div>
-                <div className="flex justify-between text-xs font-bold text-[var(--primary)] border-t border-[var(--border-color)] pt-1">
-                  <span>الإجمالي</span>
-                  <span dir="ltr">{grandTotal.toLocaleString("en-US")} ج.م</span>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {items.length === 0 && (
-            <p className="text-xs text-[var(--text-muted)] mt-2 text-center py-3 border border-dashed border-[var(--border-color)] rounded-[var(--radius-md)]">
-              ابحث عن المنتج وانقر على المتغير لإضافته
-            </p>
-          )}
-        </div>
-
-        {/* Note */}
-        <div>
-          <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">ملاحظات</label>
-          <textarea value={note} onChange={(e) => setNote(e.target.value)}
-            className="form-input min-h-[60px] resize-none" placeholder="ملاحظات اختيارية..." />
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-// ── Merge Orders Modal ─────────────────────────────────────────────────
-function MergeModal({ orders, open, onClose, onMerged }: {
-  orders: XenoOrder[];
-  open: boolean;
-  onClose: () => void;
-  onMerged: (newOrder: XenoOrder, removedIds: string[]) => void;
-}) {
-  const [merging, setMerging] = useState(false);
-  const { success, error } = useToast();
-
-  const allItems = orders.flatMap(o => o.items);
-  const grandTotal = orders.reduce((s, o) => s + o.total, 0);
-
-  async function handleMerge() {
+  async function handleMergeDup() {
+    if (!pendingOrder) return;
     setMerging(true);
     try {
+      const all = [pendingOrder, ...dupOrders];
       const res = await fetch("/api/shopify/orders/merge", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ shopifyIds: orders.map(o => o.shopifyId) }),
+        body:    JSON.stringify({ shopifyIds: all.map(o => o.shopifyId) }),
       });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error ?? "فشل الدمج");
-      success("تم الدمج", `طلب جديد: ${data.order.orderNumber}`);
-      onMerged(data.order, orders.map(o => o.id));
+      success("تم الدمج", `طلب مدموج: ${data.order.orderNumber}`);
+      onCreated(data.order);
+      resetForm();
       onClose();
     } catch (err) {
       error("خطأ", String(err));
@@ -367,57 +282,161 @@ function MergeModal({ orders, open, onClose, onMerged }: {
     }
   }
 
+  function skipMerge() {
+    if (pendingOrder) {
+      success("تم إنشاء الطلب", `رقم الطلب: ${pendingOrder.orderNumber}`);
+      onCreated(pendingOrder);
+    }
+    resetForm();
+    onClose();
+  }
+
+  const isBusy = saving || merging;
+
   return (
-    <Modal open={open} onClose={merging ? () => {} : onClose} title="دمج الطلبات المكررة" size="md"
+    <Modal
+      open={open}
+      onClose={isBusy ? () => {} : (step === "merge-prompt" ? skipMerge : onClose)}
+      title={step === "merge-prompt" ? "طلب مكرر موجود" : "إنشاء طلب جديد"}
+      size="lg"
       footer={
-        <>
-          <Button variant="secondary" onClick={onClose} disabled={merging}>إلغاء</Button>
-          <Button variant="primary" onClick={handleMerge} loading={merging} icon={<Merge size={14} />}>
-            دمج في طلب واحد
-          </Button>
-        </>
+        step === "merge-prompt" ? (
+          <>
+            <Button variant="secondary" onClick={skipMerge} disabled={merging}>تخطي — إبقاء منفصلَيْن</Button>
+            <Button variant="primary" onClick={handleMergeDup} loading={merging} icon={<Merge size={14} />}>
+              دمج في طلب واحد
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button variant="secondary" onClick={onClose} disabled={saving}>إلغاء</Button>
+            <Button variant="primary" onClick={handleCreate} loading={saving} icon={<Save size={14} />}>
+              إنشاء الطلب على Shopify
+            </Button>
+          </>
+        )
       }
     >
-      <div className="space-y-3 text-sm">
-        <p className="text-xs text-[var(--text-muted)]">
-          سيتم دمج الطلبات التالية في طلب جديد واحد، وإلغاء الطلبات الأصلية تلقائياً.
-        </p>
-
-        {/* Orders being merged */}
-        <div className="space-y-2">
-          {orders.map(o => (
-            <div key={o.id} className="border border-[var(--border-color)] rounded-md p-3 space-y-1.5">
-              <div className="flex justify-between items-center">
-                <span className="font-mono text-xs font-bold text-[var(--primary)]">{o.orderNumber}</span>
-                <span className="text-xs font-bold" dir="ltr">{o.total.toLocaleString("en-US")} ج.م</span>
-              </div>
-              <div className="space-y-0.5">
-                {o.items.map(item => (
-                  <p key={item.id} className="text-[11px] text-[var(--text-muted)]">
-                    {item.productName}{item.variant ? ` · ${item.variant}` : ""} × {item.quantity}
-                  </p>
-                ))}
-              </div>
+      {step === "merge-prompt" && pendingOrder ? (
+        <div className="space-y-3">
+          <div className="flex items-start gap-3 p-3 rounded-md bg-yellow-50 border border-yellow-200">
+            <span className="text-yellow-500 mt-0.5"><Merge size={16} /></span>
+            <div>
+              <p className="text-sm font-semibold text-yellow-800">وجدنا طلب مفتوح لنفس العميل</p>
+              <p className="text-xs text-yellow-700 mt-0.5">تم إنشاء طلبك بنجاح. هل تريد دمجه مع الطلب الموجود في طلب واحد؟</p>
             </div>
-          ))}
-        </div>
-
-        {/* Combined summary */}
-        <div className="bg-[var(--bg-base)] rounded-md p-3 border border-[var(--border-color)]">
-          <p className="text-xs font-semibold text-[var(--text-secondary)] mb-1.5">الطلب المدموج سيحتوي على:</p>
-          <div className="space-y-0.5">
-            {allItems.map((item, i) => (
-              <p key={i} className="text-[11px] text-[var(--text-muted)]">
-                {item.productName}{item.variant ? ` · ${item.variant}` : ""} × {item.quantity}
-              </p>
+          </div>
+          <div className="space-y-2">
+            {[pendingOrder, ...dupOrders].map((o, i) => (
+              <div key={o.id} className="border border-[var(--border-color)] rounded-md p-3">
+                <div className="flex justify-between items-center mb-1">
+                  <span className="font-mono text-xs font-bold text-[var(--primary)]">{o.orderNumber}</span>
+                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[var(--bg-base)] text-[var(--text-muted)]">
+                    {i === 0 ? "جديد" : "موجود"}
+                  </span>
+                </div>
+                <div className="space-y-0.5">
+                  {o.items.map(item => (
+                    <p key={item.id} className="text-[11px] text-[var(--text-muted)]">
+                      {item.productName}{item.variant ? ` · ${item.variant}` : ""} × {item.quantity}
+                    </p>
+                  ))}
+                </div>
+                <p className="text-xs font-bold text-[var(--text-primary)] mt-1.5" dir="ltr">{o.total.toLocaleString("en-US")} ج.م</p>
+              </div>
             ))}
           </div>
-          <div className="flex justify-between mt-2 pt-2 border-t border-[var(--border-color)] text-xs font-bold text-[var(--primary)]">
-            <span>الإجمالي</span>
-            <span dir="ltr">{grandTotal.toLocaleString("en-US")} ج.م</span>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {/* Customer */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">اسم العميل *</label>
+              <input value={name} onChange={(e) => setName(e.target.value)} className="form-input" placeholder="الاسم الكامل" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">رقم الهاتف *</label>
+              <input value={phone} onChange={(e) => setPhone(e.target.value)} className="form-input" dir="ltr" placeholder="01xxxxxxxxx" />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">العنوان *</label>
+              <input value={address} onChange={(e) => setAddress(e.target.value)} className="form-input" placeholder="الشارع / المنطقة" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">المدينة *</label>
+              <input value={city} onChange={(e) => setCity(e.target.value)} className="form-input" placeholder="القاهرة" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">المحافظة *</label>
+              <GovPicker value={gov} onChange={handleGovChange} />
+            </div>
+          </div>
+
+          {/* Items */}
+          <div>
+            <label className="block text-xs font-semibold text-[var(--text-secondary)] mb-2">المنتجات *</label>
+            <ProductPicker onSelect={addProductItem} />
+
+            {items.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {items.map((item, i) => (
+                  <div key={i} className="flex items-center gap-2 bg-[var(--bg-base)] rounded-[var(--radius-md)] px-3 py-2">
+                    <span className="flex-1 text-xs text-[var(--text-primary)] truncate">{item.title}</span>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <label className="text-[10px] text-[var(--text-muted)]">كمية</label>
+                      <input type="number" min={1} value={item.qty}
+                        onChange={(e) => updateItem(i, "qty", parseInt(e.target.value) || 1)}
+                        className="form-input w-14 text-center text-xs py-1 px-1" />
+                      <label className="text-[10px] text-[var(--text-muted)]">سعر</label>
+                      <input type="number" min={0} value={item.price}
+                        onChange={(e) => updateItem(i, "price", parseFloat(e.target.value) || 0)}
+                        className="form-input w-20 text-center text-xs py-1 px-1" dir="ltr" />
+                      <span className="text-[10px] text-[var(--text-muted)]">ج.م</span>
+                      <button onClick={() => removeItem(i)} className="text-[var(--danger)] hover:opacity-80 mr-1">
+                        <X size={13} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                <div className="border-t border-[var(--border-color)] pt-2 mt-1 space-y-1">
+                  <div className="flex justify-between text-xs text-[var(--text-secondary)]">
+                    <span>المنتجات</span>
+                    <span dir="ltr">{productTotal.toLocaleString("en-US")} ج.م</span>
+                  </div>
+                  <div className="flex justify-between text-xs text-[var(--text-secondary)]">
+                    <span>{shippingTitle || "الشحن"}</span>
+                    <span dir="ltr">
+                      {loadingShip
+                        ? <Loader2 size={12} className="inline animate-spin" />
+                        : gov
+                          ? `${shippingCost.toLocaleString("en-US")} ج.م`
+                          : "اختر المحافظة"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-xs font-bold text-[var(--primary)] border-t border-[var(--border-color)] pt-1">
+                    <span>الإجمالي</span>
+                    <span dir="ltr">{grandTotal.toLocaleString("en-US")} ج.م</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {items.length === 0 && (
+              <p className="text-xs text-[var(--text-muted)] mt-2 text-center py-3 border border-dashed border-[var(--border-color)] rounded-[var(--radius-md)]">
+                ابحث عن المنتج وانقر على المتغير لإضافته
+              </p>
+            )}
+          </div>
+
+          {/* Note */}
+          <div>
+            <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">ملاحظات</label>
+            <textarea value={note} onChange={(e) => setNote(e.target.value)}
+              className="form-input min-h-[60px] resize-none" placeholder="ملاحظات اختيارية..." />
           </div>
         </div>
-      </div>
+      )}
     </Modal>
   );
 }
@@ -506,7 +525,6 @@ export default function OrdersPage() {
   const [createOpen,  setCreateOpen]  = useState(false);
   const [updatingId,  setUpdatingId]  = useState<string | null>(null);
   const [statusMenuId,setStatusMenuId]= useState<string | null>(null);
-  const [mergeOrders, setMergeOrders] = useState<XenoOrder[] | null>(null);
   // Pagination
   const [pageSize,    setPageSize]    = useState(50);
   const [currentPage, setCurrentPage] = useState(1);
@@ -517,22 +535,6 @@ export default function OrdersPage() {
   const { success, error } = useToast();
 
   const totalPages = totalCount != null ? Math.max(1, Math.ceil(totalCount / pageSize)) : null;
-
-  // Detect mergeable groups: same phone, all pending/processing
-  const mergeGroups = useMemo(() => {
-    const groups = new Map<string, XenoOrder[]>();
-    for (const o of orders) {
-      if (o.status !== "pending" && o.status !== "processing") continue;
-      const key = o.customerPhone.replace(/[^0-9]/g, "");
-      if (!key) continue;
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key)!.push(o);
-    }
-    // Only keep groups with 2+ orders
-    const result = new Map<string, XenoOrder[]>();
-    for (const [k, v] of groups) if (v.length >= 2) result.set(k, v);
-    return result;
-  }, [orders]);
 
   async function updateOrderStatus(order: XenoOrder, action: "fulfill" | "cancel") {
     setUpdatingId(order.id);
@@ -671,20 +673,6 @@ export default function OrdersPage() {
         onCreated={(newOrder) => { setOrders((prev) => [newOrder, ...prev]); setTotalCount((c) => (c ?? 0) + 1); }}
       />
 
-      {/* Merge Orders Modal */}
-      {mergeOrders && (
-        <MergeModal
-          orders={mergeOrders}
-          open={true}
-          onClose={() => setMergeOrders(null)}
-          onMerged={(newOrder, removedIds) => {
-            setOrders((prev) => [newOrder, ...prev.filter(o => !removedIds.includes(o.id))]);
-            setTotalCount((c) => c != null ? c - (removedIds.length - 1) : null);
-            setMergeOrders(null);
-          }}
-        />
-      )}
-
       {/* Filter Tabs */}
       <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
         {TABS.map((tab) => {
@@ -774,14 +762,9 @@ export default function OrdersPage() {
                     return (
                       <tr key={order.id}>
                         <td>
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <Link href={`/dashboard/orders/${order.id}`} className="font-mono text-[var(--primary)] font-bold text-xs hover:underline">
-                              {order.orderNumber}
-                            </Link>
-                            {mergeGroups.has(order.customerPhone.replace(/[^0-9]/g, "")) && (
-                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-yellow-100 text-yellow-700 whitespace-nowrap">مكرر</span>
-                            )}
-                          </div>
+                          <Link href={`/dashboard/orders/${order.id}`} className="font-mono text-[var(--primary)] font-bold text-xs hover:underline">
+                            {order.orderNumber}
+                          </Link>
                         </td>
                         <td>
                           <div>
@@ -905,20 +888,6 @@ export default function OrdersPage() {
                                 </Link>
                               )
                             )}
-                            {/* Merge button — only for orders in a duplicate group */}
-                            {(() => {
-                              const key = order.customerPhone.replace(/[^0-9]/g, "");
-                              const group = mergeGroups.get(key);
-                              return group ? (
-                                <button
-                                  onClick={() => setMergeOrders(group)}
-                                  className="p-1.5 rounded-[var(--radius-sm)] text-[var(--warning)] hover:bg-yellow-50 transition-colors"
-                                  title="دمج الطلبات المكررة"
-                                >
-                                  <Merge size={14} />
-                                </button>
-                              ) : null;
-                            })()}
                           </div>
                         </td>
                       </tr>
