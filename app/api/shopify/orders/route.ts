@@ -66,34 +66,35 @@ export async function GET(req: NextRequest) {
   }
 }
 
+// Exact names as Shopify stores Egypt provinces (ISO + Shopify verified)
 const GOV_EN: Record<string, string> = {
   "القاهرة":       "Cairo",
   "الإسكندرية":    "Alexandria",
   "الجيزة":        "Giza",
-  "الشرقية":       "Ash Sharqiyah",
-  "الدقهلية":      "Ad Daqahliyah",
-  "البحيرة":       "Al Buhayrah",
-  "المنوفية":      "Al Minufiyah",
-  "الغربية":       "Al Gharbiyah",
-  "كفر الشيخ":     "Kafr ash Shaykh",
-  "الإسماعيلية":   "Al Isma'iliyah",
-  "بورسعيد":       "Bur Sa'id",
-  "السويس":        "As Suways",
-  "شمال سيناء":    "Shamal Sina'",
-  "جنوب سيناء":    "Janub Sina'",
-  "الفيوم":        "Al Fayyum",
-  "بني سويف":      "Bani Suwayf",
-  "المنيا":        "Al Minya",
-  "أسيوط":        "Asyut",
-  "سوهاج":        "Suhaj",
-  "قنا":           "Qina",
-  "الأقصر":        "Al Uqsur",
-  "أسوان":        "Aswan",
-  "البحر الأحمر":  "Al Bahr al Ahmar",
-  "الوادي الجديد": "Al Wadi al Jadid",
-  "مطروح":        "Matruh",
-  "دمياط":        "Dumyat",
-  "القليوبية":     "Al Qalyubiyah",
+  "الشرقية":       "Sharqia",
+  "الدقهلية":      "Dakahlia",
+  "البحيرة":       "Beheira",
+  "المنوفية":      "Monufia",
+  "الغربية":       "Gharbia",
+  "كفر الشيخ":     "Kafr el-Sheikh",
+  "الإسماعيلية":   "Ismailia",
+  "بورسعيد":       "Port Said",
+  "السويس":        "Suez",
+  "شمال سيناء":    "North Sinai",
+  "جنوب سيناء":    "South Sinai",
+  "الفيوم":        "Faiyum",
+  "بني سويف":      "Beni Suef",
+  "المنيا":        "Minya",
+  "أسيوط":         "Asyut",
+  "سوهاج":         "Sohag",
+  "قنا":            "Qena",
+  "الأقصر":        "Luxor",
+  "أسوان":         "Aswan",
+  "البحر الأحمر":  "Red Sea",
+  "الوادي الجديد": "New Valley",
+  "مطروح":         "Matruh",
+  "دمياط":         "Damietta",
+  "القليوبية":     "Qalyubia",
 };
 
 async function resolveCustomerId(shop: string, token: string, version: string, firstName: string, lastName: string, rawPhone: string): Promise<number | null> {
@@ -133,7 +134,8 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { customerName, phone, address1, city, province, note, items, total } = body;
+    const { customerName, phone, address1, city, province, note, items, total, shippingCost, shippingTitle } = body;
+    void total; // Shopify calculates total from line_items + shipping_lines
 
     if (!customerName || !phone || !address1 || !city) {
       return NextResponse.json({ error: "customerName, phone, address1, city required" }, { status: 400 });
@@ -176,10 +178,18 @@ export async function POST(req: NextRequest) {
       billing_address:  addrBlock,
       line_items: items.map((item: { variantId?: number; title: string; qty: number; price: number }) => ({
         ...(item.variantId ? { variant_id: item.variantId } : { title: item.title }),
-        quantity:       item.qty,
-        price:          String(item.price),
+        quantity:          item.qty,
+        price:             String(item.price),
         requires_shipping: true,
       })),
+      ...(shippingCost > 0 ? {
+        shipping_lines: [{
+          title:  shippingTitle || "الشحن",
+          price:  String(shippingCost),
+          code:   "standard",
+          source: "xeno",
+        }],
+      } : {}),
     };
 
     const resp = await fetch(`https://${SHOP}/admin/api/${VERSION}/orders.json`, {

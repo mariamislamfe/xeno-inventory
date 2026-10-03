@@ -137,27 +137,59 @@ function GovPicker({ value, onChange }: { value: string; onChange: (v: string) =
 interface NewOrderItem { title: string; variantId?: number; qty: number; price: number }
 
 function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (o: XenoOrder) => void }) {
-  const [name,    setName]    = useState("");
-  const [phone,   setPhone]   = useState("");
-  const [address, setAddress] = useState("");
-  const [city,    setCity]    = useState("");
-  const [gov,     setGov]     = useState("");
-  const [note,    setNote]    = useState("");
-  const [items,   setItems]   = useState<NewOrderItem[]>([]);
-  const [saving,  setSaving]  = useState(false);
+  const [name,          setName]          = useState("");
+  const [phone,         setPhone]         = useState("");
+  const [address,       setAddress]       = useState("");
+  const [city,          setCity]          = useState("");
+  const [gov,           setGov]           = useState("");
+  const [note,          setNote]          = useState("");
+  const [items,         setItems]         = useState<NewOrderItem[]>([]);
+  const [saving,        setSaving]        = useState(false);
+  const [shippingCost,  setShippingCost]  = useState<number>(0);
+  const [shippingTitle, setShippingTitle] = useState<string>("الشحن");
+  const [loadingShip,   setLoadingShip]   = useState(false);
+  const shippingTimer = useRef<ReturnType<typeof setTimeout>>(null);
   const { success, error } = useToast();
 
   function addProductItem(title: string, variantTitle: string, sku: string, price: number, variantId: number) {
     const displayTitle = variantTitle ? `${title} — ${variantTitle}` : title;
     setItems((p) => [...p, { title: displayTitle, variantId, qty: 1, price }]);
-    void sku; // sku stored server-side via variantId
+    void sku;
   }
   function removeItem(i: number) { setItems((p) => p.filter((_, idx) => idx !== i)); }
   function updateItem(i: number, field: "qty" | "price", val: number) {
     setItems((p) => p.map((item, idx) => idx === i ? { ...item, [field]: val } : item));
   }
 
-  const total = items.reduce((s, i) => s + i.price * i.qty, 0);
+  const productTotal = items.reduce((s, i) => s + i.price * i.qty, 0);
+  const grandTotal   = productTotal + shippingCost;
+
+  // Fetch shipping rate when governorate or product total changes
+  function fetchShipping(province: string, total: number) {
+    if (!province) { setShippingCost(0); return; }
+    if (shippingTimer.current) clearTimeout(shippingTimer.current);
+    shippingTimer.current = setTimeout(async () => {
+      setLoadingShip(true);
+      try {
+        const res  = await fetch(`/api/shopify/shipping-rates?province=${encodeURIComponent(province)}&total=${total}`);
+        const data = await res.json();
+        setShippingCost(data.rate ?? 0);
+        if (data.title) setShippingTitle(data.title);
+      } catch { /* keep previous */ }
+      finally  { setLoadingShip(false); }
+    }, 400);
+  }
+
+  // Re-fetch shipping when product total changes (Shopify rates can be total-based)
+  useEffect(() => {
+    if (gov) fetchShipping(gov, productTotal);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productTotal]);
+
+  function handleGovChange(v: string) {
+    setGov(v);
+    fetchShipping(v, productTotal);
+  }
 
   async function handleCreate() {
     if (!name || !phone || !address || !city || !gov) { error("بيانات ناقصة", "اسم العميل والهاتف والعنوان والمدينة والمحافظة مطلوبون"); return; }
@@ -167,7 +199,7 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
       const res = await fetch("/api/shopify/orders", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ customerName: name, phone, address1: address, city, province: gov, note, items, total }),
+        body:    JSON.stringify({ customerName: name, phone, address1: address, city, province: gov, note, items, total: grandTotal, shippingCost, shippingTitle }),
       });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error ?? "فشل إنشاء الطلب");
@@ -175,7 +207,7 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
       onCreated(data.order);
       onClose();
       setName(""); setPhone(""); setAddress(""); setCity(""); setGov(""); setNote("");
-      setItems([]);
+      setItems([]); setShippingCost(0);
     } catch (err) {
       error("خطأ", String(err));
     } finally {
@@ -215,7 +247,7 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
           </div>
           <div>
             <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">المحافظة *</label>
-            <GovPicker value={gov} onChange={setGov} />
+            <GovPicker value={gov} onChange={handleGovChange} />
           </div>
         </div>
 
@@ -247,10 +279,25 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
                   </div>
                 </div>
               ))}
-              <div className="text-left pt-1">
-                <span className="text-xs font-bold text-[var(--primary)]" dir="ltr">
-                  الإجمالي: {total.toLocaleString("en-US")} ج.م
-                </span>
+              <div className="border-t border-[var(--border-color)] pt-2 mt-1 space-y-1">
+                <div className="flex justify-between text-xs text-[var(--text-secondary)]">
+                  <span>المنتجات</span>
+                  <span dir="ltr">{productTotal.toLocaleString("en-US")} ج.م</span>
+                </div>
+                <div className="flex justify-between text-xs text-[var(--text-secondary)]">
+                  <span>{shippingTitle || "الشحن"}</span>
+                  <span dir="ltr">
+                    {loadingShip
+                      ? <Loader2 size={12} className="inline animate-spin" />
+                      : gov
+                        ? `${shippingCost.toLocaleString("en-US")} ج.م`
+                        : "اختر المحافظة"}
+                  </span>
+                </div>
+                <div className="flex justify-between text-xs font-bold text-[var(--primary)] border-t border-[var(--border-color)] pt-1">
+                  <span>الإجمالي</span>
+                  <span dir="ltr">{grandTotal.toLocaleString("en-US")} ج.م</span>
+                </div>
               </div>
             </div>
           )}

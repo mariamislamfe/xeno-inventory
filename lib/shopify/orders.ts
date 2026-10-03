@@ -82,6 +82,37 @@ export interface XenoOrder {
   createdAt: string;
 }
 
+// Reverse map: Shopify English province name → Arabic
+const GOV_AR: Record<string, string> = {
+  "Cairo":         "القاهرة",
+  "Alexandria":    "الإسكندرية",
+  "Giza":          "الجيزة",
+  "Sharqia":       "الشرقية",
+  "Dakahlia":      "الدقهلية",
+  "Beheira":       "البحيرة",
+  "Monufia":       "المنوفية",
+  "Gharbia":       "الغربية",
+  "Kafr el-Sheikh":"كفر الشيخ",
+  "Ismailia":      "الإسماعيلية",
+  "Port Said":     "بورسعيد",
+  "Suez":          "السويس",
+  "North Sinai":   "شمال سيناء",
+  "South Sinai":   "جنوب سيناء",
+  "Faiyum":        "الفيوم",
+  "Beni Suef":     "بني سويف",
+  "Minya":         "المنيا",
+  "Asyut":         "أسيوط",
+  "Sohag":         "سوهاج",
+  "Qena":          "قنا",
+  "Luxor":         "الأقصر",
+  "Aswan":         "أسوان",
+  "Red Sea":       "البحر الأحمر",
+  "New Valley":    "الوادي الجديد",
+  "Matruh":        "مطروح",
+  "Damietta":      "دمياط",
+  "Qalyubia":      "القليوبية",
+};
+
 function mapStatus(o: ShopifyOrderRaw): XenoOrder["status"] {
   if (o.cancelled_at) return "cancelled";
   if (o.fulfillment_status === "fulfilled") return "delivered";
@@ -116,7 +147,7 @@ export function normalizeOrder(o: ShopifyOrderRaw): XenoOrder {
     email:       o.email,
     address:     addr?.address1 ?? "",
     city:        addr?.city ?? "",
-    governorate: addr?.province ?? "",
+    governorate: GOV_AR[addr?.province ?? ""] ?? addr?.province ?? "",
     status:      mapStatus(o),
     paymentStatus: mapPayment(o.financial_status),
     total:       parseFloat(o.total_price),
