@@ -404,24 +404,30 @@ function formatDate(iso: string): string {
   });
 }
 
-const PAGE_SIZE = 50;
+const PAGE_SIZES = [25, 50, 100];
 
 export default function OrdersPage() {
-  const [orders,       setOrders]       = useState<XenoOrder[]>([]);
-  const [loading,      setLoading]      = useState(true);
-  const [loadingMore,  setLoadingMore]  = useState(false);
-  const [hasMore,      setHasMore]      = useState(false);
-  const [nextPageInfo, setNextPageInfo] = useState<string | null>(null);
-  const [activeTab,    setActiveTab]    = useState<TabKey>("any");
-  const [search,       setSearch]       = useState("");
-  const [searchInput,  setSearchInput]  = useState("");
-  const [tagFilter,    setTagFilter]    = useState("");
-  const [totalCount,   setTotalCount]   = useState<number | null>(null);
-  const [createOpen,   setCreateOpen]   = useState(false);
-  const [updatingId,   setUpdatingId]   = useState<string | null>(null);
-  const [statusMenuId, setStatusMenuId] = useState<string | null>(null);
+  const [orders,      setOrders]      = useState<XenoOrder[]>([]);
+  const [loading,     setLoading]     = useState(true);
+  const [hasMore,     setHasMore]     = useState(false);
+  const [activeTab,   setActiveTab]   = useState<TabKey>("any");
+  const [search,      setSearch]      = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [tagFilter,   setTagFilter]   = useState("");
+  const [totalCount,  setTotalCount]  = useState<number | null>(null);
+  const [createOpen,  setCreateOpen]  = useState(false);
+  const [updatingId,  setUpdatingId]  = useState<string | null>(null);
+  const [statusMenuId,setStatusMenuId]= useState<string | null>(null);
+  // Pagination
+  const [pageSize,    setPageSize]    = useState(50);
+  const [currentPage, setCurrentPage] = useState(1);
+  // cursors[i] = cursor needed to fetch page i+1 (cursors[0]=null means page 1 starts fresh)
+  const cursors = useRef<(string | null)[]>([null]);
+
   const searchTimer = useRef<ReturnType<typeof setTimeout>>(null);
   const { success, error } = useToast();
+
+  const totalPages = totalCount != null ? Math.max(1, Math.ceil(totalCount / pageSize)) : null;
 
   async function updateOrderStatus(order: XenoOrder, action: "fulfill" | "cancel") {
     setUpdatingId(order.id);
@@ -454,17 +460,16 @@ export default function OrdersPage() {
     } catch { setTotalCount(null); }
   }
 
-  async function loadOrders(tab: TabKey, q: string, tag: string, cursor: string | null = null) {
-    cursor ? setLoadingMore(true) : setLoading(true);
+  async function loadOrders(tab: TabKey, q: string, tag: string, page = 1, size = pageSize) {
+    setLoading(true);
     try {
       const t      = TABS.find((t) => t.key === tab)!;
-      const params = new URLSearchParams({ ...t.shopifyParam, limit: String(PAGE_SIZE) });
+      const cursor = cursors.current[page - 1] ?? null;
+      const params = new URLSearchParams({ ...t.shopifyParam, limit: String(size) });
       if (cursor) {
-        // cursor-based: only limit + page_info
         params.set("page_info", cursor);
       } else {
         if (q) params.set("query", q);
-        // Only apply dropdown tag if the tab doesn't already filter by tag
         if (tag && !t.shopifyParam.tag) params.set("tag", tag);
       }
 
@@ -472,28 +477,34 @@ export default function OrdersPage() {
       const data = await res.json();
       if (data.error) throw new Error(data.error);
 
-      setOrders((prev) => cursor ? [...prev, ...data.orders] : data.orders);
+      setOrders(data.orders);
       setHasMore(data.has_more ?? false);
-      setNextPageInfo(data.next_page_info ?? null);
+      setCurrentPage(page);
+
+      // Store cursor for the next page
+      if (data.next_page_info) {
+        cursors.current[page] = data.next_page_info;
+      }
     } catch {
       error("خطأ", "تعذر تحميل الطلبات من Shopify");
     } finally {
       setLoading(false);
-      setLoadingMore(false);
     }
   }
 
+  function resetAndLoad(tab: TabKey, q: string, tag: string, size = pageSize) {
+    cursors.current = [null];
+    setCurrentPage(1);
+    loadOrders(tab, q, tag, 1, size);
+    fetchCount(tab);
+  }
+
   useEffect(() => {
-    setOrders([]);
-    setNextPageInfo(null);
-    loadOrders(activeTab, search, tagFilter);
-    fetchCount(activeTab);
+    resetAndLoad(activeTab, search, tagFilter);
   }, [activeTab, search, tagFilter]);
 
   function switchTab(key: TabKey) {
     setActiveTab(key);
-    setOrders([]);
-    setNextPageInfo(null);
   }
 
   function handleSearchChange(val: string) {
@@ -504,8 +515,17 @@ export default function OrdersPage() {
 
   function handleTagFilter(val: string) {
     setTagFilter(val);
-    setOrders([]);
-    setNextPageInfo(null);
+  }
+
+  function handlePageSizeChange(size: number) {
+    setPageSize(size);
+    resetAndLoad(activeTab, search, tagFilter, size);
+  }
+
+  function goToPage(page: number) {
+    if (page < 1 || (totalPages && page > totalPages)) return;
+    if (page > 1 && !cursors.current[page - 1]) return; // cursor not yet known
+    loadOrders(activeTab, search, tagFilter, page);
   }
 
   return (
@@ -770,21 +790,83 @@ export default function OrdersPage() {
               </table>
             </div>
 
-            {/* Load more — now with correct cursor */}
-            {hasMore && (
-              <div className="flex justify-center p-4 border-t border-[var(--border-subtle)]">
-                <Button
-                  variant="secondary" size="sm"
-                  icon={loadingMore ? <Loader2 size={13} className="animate-spin" /> : <ChevronDown size={13} />}
-                  onClick={() => loadOrders(activeTab, search, tagFilter, nextPageInfo)}
-                  disabled={loadingMore}
-                >
-                  {loadingMore
-                    ? "جارٍ التحميل..."
-                    : `تحميل المزيد (${orders.length.toLocaleString("en-US")} / ${totalCount?.toLocaleString("en-US") ?? "..."})`}
-                </Button>
+            {/* Pagination */}
+            <div className="flex items-center justify-between gap-4 px-4 py-3 border-t border-[var(--border-subtle)] flex-wrap">
+              {/* Page size selector */}
+              <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+                <span>عرض</span>
+                <div className="flex gap-1">
+                  {PAGE_SIZES.map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => handlePageSizeChange(s)}
+                      className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                        pageSize === s
+                          ? "bg-[var(--primary)] text-white"
+                          : "bg-[var(--bg-base)] text-[var(--text-secondary)] hover:bg-[var(--border-color)]"
+                      }`}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+                <span>طلب / صفحة</span>
               </div>
-            )}
+
+              {/* Page navigation */}
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => goToPage(currentPage - 1)}
+                  disabled={currentPage === 1 || loading}
+                  className="px-2 py-1 rounded text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-base)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors font-bold"
+                >
+                  ›
+                </button>
+                {(() => {
+                  const total    = totalPages ?? (currentPage + (hasMore ? 1 : 0));
+                  const maxKnown = cursors.current.length;
+                  const pages: (number | "…")[] = [];
+                  for (let p = 1; p <= Math.min(total, maxKnown + 1); p++) {
+                    if (p === 1 || p === total || Math.abs(p - currentPage) <= 2) {
+                      pages.push(p);
+                    } else if (pages[pages.length - 1] !== "…") {
+                      pages.push("…");
+                    }
+                  }
+                  return pages.map((p, i) =>
+                    p === "…" ? (
+                      <span key={`e${i}`} className="px-1 text-xs text-[var(--text-muted)]">…</span>
+                    ) : (
+                      <button
+                        key={p}
+                        onClick={() => goToPage(p as number)}
+                        disabled={loading || ((p as number) > 1 && !cursors.current[(p as number) - 1])}
+                        className={`min-w-[28px] h-7 rounded text-xs font-medium transition-colors ${
+                          p === currentPage
+                            ? "bg-[var(--primary)] text-white"
+                            : "text-[var(--text-secondary)] hover:bg-[var(--bg-base)] disabled:opacity-40"
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    )
+                  );
+                })()}
+                <button
+                  onClick={() => goToPage(currentPage + 1)}
+                  disabled={!hasMore || loading}
+                  className="px-2 py-1 rounded text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-base)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors font-bold"
+                >
+                  ‹
+                </button>
+              </div>
+
+              <span className="text-xs text-[var(--text-muted)]">
+                {loading
+                  ? <Loader2 size={11} className="inline animate-spin" />
+                  : `صفحة ${currentPage}${totalPages ? ` / ${totalPages}` : ""}`}
+              </span>
+            </div>
           </>
         )}
       </div>
