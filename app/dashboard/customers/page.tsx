@@ -134,7 +134,7 @@ export default function CustomersPage() {
             <input
               value={searchInput}
               onChange={(e) => handleSearchChange(e.target.value)}
-              placeholder="بحث بالاسم أو الهاتف أو البريد..."
+              placeholder="بحث بالاسم أو رقم الهاتف أو رقم الطلب..."
               className="form-input pl-9"
             />
             <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
