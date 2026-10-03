@@ -156,6 +156,7 @@ export async function POST(req: NextRequest) {
     const fallbackEmail = `${digits}@xeno-orders.com`;
 
     const customerId  = await resolveCustomerId(SHOP, TOKEN, VERSION, firstName, lastName, phone);
+    console.log("[dup-check] phone:", phone, "digits:", digits, "customerId:", customerId, "email:", fallbackEmail);
 
     // Check for existing open orders BEFORE creating — try two independent methods so
     // at least one will succeed even if resolveCustomerId returned null.
@@ -168,12 +169,13 @@ export async function POST(req: NextRequest) {
           `https://${SHOP}/admin/api/${VERSION}/orders.json?${qs}&status=open&limit=10`,
           { headers: { "X-Shopify-Access-Token": TOKEN as string } },
         );
+        const d = await r.json() as { orders?: ShopifyOrderRaw[]; errors?: unknown };
+        console.log(`[dup-check] ${qs} → status:${r.status} count:${d.orders?.length ?? 0}`);
         if (!r.ok) return;
-        const d = await r.json() as { orders: ShopifyOrderRaw[] };
         for (const o of d.orders ?? []) {
           if (!seen.has(o.id)) { seen.add(o.id); existingOpenOrders.push(normalizeOrder(o)); }
         }
-      } catch { /* ignore */ }
+      } catch (e) { console.log("[dup-check] fetch error:", e); }
     }
 
     // Method 1: by customer_id (works when resolveCustomerId succeeds)
@@ -181,6 +183,8 @@ export async function POST(req: NextRequest) {
 
     // Method 2: by fallback email we stamp on every modal-created order
     await fetchOpenOrders(`email=${encodeURIComponent(fallbackEmail)}`);
+
+    console.log("[dup-check] existingOpenOrders count:", existingOpenOrders.length);
 
     const addrBlock = {
       first_name:   firstName,
