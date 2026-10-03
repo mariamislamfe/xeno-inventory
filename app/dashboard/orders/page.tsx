@@ -419,6 +419,7 @@ export default function OrdersPage() {
   const [totalCount,   setTotalCount]   = useState<number | null>(null);
   const [createOpen,   setCreateOpen]   = useState(false);
   const [updatingId,   setUpdatingId]   = useState<string | null>(null);
+  const [statusMenuId, setStatusMenuId] = useState<string | null>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout>>(null);
   const { success, error } = useToast();
 
@@ -664,27 +665,40 @@ export default function OrdersPage() {
                         </td>
                         <td>
                           {order.status === "pending" || order.status === "processing" ? (
-                            <div className="relative group inline-block">
-                              <Badge variant={st.variant} size="sm" className="cursor-pointer">
-                                {updatingId === order.id ? <Loader2 size={10} className="inline animate-spin ml-1" /> : null}
-                                {st.label} ▾
-                              </Badge>
-                              <div className="absolute z-20 top-full mt-1 right-0 hidden group-hover:flex flex-col bg-[var(--bg-card)] border border-[var(--border-color)] rounded-[var(--radius-md)] shadow-lg overflow-hidden min-w-[110px]">
-                                <button
-                                  onClick={() => updateOrderStatus(order, "fulfill")}
-                                  disabled={updatingId === order.id}
-                                  className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--success)] hover:bg-[var(--bg-base)] transition-colors whitespace-nowrap"
-                                >
-                                  <CheckCircle2 size={13} /> مكتمل
-                                </button>
-                                <button
-                                  onClick={() => updateOrderStatus(order, "cancel")}
-                                  disabled={updatingId === order.id}
-                                  className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--danger)] hover:bg-[var(--bg-base)] transition-colors whitespace-nowrap"
-                                >
-                                  <XCircle size={13} /> ملغي
-                                </button>
-                              </div>
+                            <div className="relative inline-block">
+                              <button
+                                onClick={() => setStatusMenuId(statusMenuId === order.id ? null : order.id)}
+                                className="flex items-center gap-1"
+                                disabled={updatingId === order.id}
+                              >
+                                <Badge variant={st.variant} size="sm">
+                                  {updatingId === order.id
+                                    ? <Loader2 size={10} className="inline animate-spin ml-1" />
+                                    : null}
+                                  {st.label}
+                                </Badge>
+                                <ChevronDown size={10} className="text-[var(--text-muted)]" />
+                              </button>
+                              {statusMenuId === order.id && (
+                                <>
+                                  {/* backdrop to close on outside click */}
+                                  <div className="fixed inset-0 z-10" onClick={() => setStatusMenuId(null)} />
+                                  <div className="absolute z-20 top-full mt-1 right-0 flex flex-col bg-[var(--bg-card)] border border-[var(--border-color)] rounded-md shadow-lg overflow-hidden min-w-[110px]">
+                                    <button
+                                      onClick={() => { setStatusMenuId(null); updateOrderStatus(order, "fulfill"); }}
+                                      className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--success)] hover:bg-[var(--bg-base)] transition-colors whitespace-nowrap"
+                                    >
+                                      <CheckCircle2 size={13} /> مكتمل
+                                    </button>
+                                    <button
+                                      onClick={() => { setStatusMenuId(null); updateOrderStatus(order, "cancel"); }}
+                                      className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--danger)] hover:bg-[var(--bg-base)] transition-colors whitespace-nowrap"
+                                    >
+                                      <XCircle size={13} /> ملغي
+                                    </button>
+                                  </div>
+                                </>
+                              )}
                             </div>
                           ) : (
                             <Badge variant={st.variant} size="sm">{st.label}</Badge>
