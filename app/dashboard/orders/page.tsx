@@ -551,7 +551,7 @@ export default function OrdersPage() {
           <Button
             variant="secondary" size="sm"
             icon={loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={14} />}
-            onClick={() => { setOrders([]); setNextPageInfo(null); loadOrders(activeTab, search, tagFilter); fetchCount(activeTab); }}
+            onClick={() => resetAndLoad(activeTab, search, tagFilter)}
             disabled={loading}
           >
             تحديث
