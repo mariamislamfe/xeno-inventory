@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { RefreshCw, Eye, Printer, Truck, Loader2, Search, ChevronDown, Tag, X, Plus, Save } from "lucide-react";
+import { RefreshCw, Eye, Printer, Truck, Loader2, Search, ChevronDown, Tag, X, Plus, Save, CheckCircle2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { Badge } from "@/components/ui/Badge";
@@ -418,8 +418,30 @@ export default function OrdersPage() {
   const [tagFilter,    setTagFilter]    = useState("");
   const [totalCount,   setTotalCount]   = useState<number | null>(null);
   const [createOpen,   setCreateOpen]   = useState(false);
+  const [updatingId,   setUpdatingId]   = useState<string | null>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout>>(null);
-  const { error } = useToast();
+  const { success, error } = useToast();
+
+  async function updateOrderStatus(order: XenoOrder, action: "fulfill" | "cancel") {
+    setUpdatingId(order.id);
+    try {
+      const res = await fetch("/api/shopify/orders/status", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ shopifyId: order.shopifyId, action }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error ?? "فشل تحديث الحالة");
+
+      const newStatus = action === "fulfill" ? "delivered" : "cancelled";
+      setOrders((prev) => prev.map((o) => o.id === order.id ? { ...o, status: newStatus } : o));
+      success("تم التحديث", action === "fulfill" ? "تم تأكيل الطلب ✓" : "تم إلغاء الطلب");
+    } catch (err) {
+      error("خطأ", String(err));
+    } finally {
+      setUpdatingId(null);
+    }
+  }
 
   async function fetchCount(tab: TabKey) {
     try {
@@ -640,7 +662,34 @@ export default function OrdersPage() {
                             {order.total.toLocaleString("en-US")} ج.م
                           </span>
                         </td>
-                        <td><Badge variant={st.variant} size="sm">{st.label}</Badge></td>
+                        <td>
+                          {order.status === "pending" || order.status === "processing" ? (
+                            <div className="relative group inline-block">
+                              <Badge variant={st.variant} size="sm" className="cursor-pointer">
+                                {updatingId === order.id ? <Loader2 size={10} className="inline animate-spin ml-1" /> : null}
+                                {st.label} ▾
+                              </Badge>
+                              <div className="absolute z-20 top-full mt-1 right-0 hidden group-hover:flex flex-col bg-[var(--bg-card)] border border-[var(--border-color)] rounded-[var(--radius-md)] shadow-lg overflow-hidden min-w-[110px]">
+                                <button
+                                  onClick={() => updateOrderStatus(order, "fulfill")}
+                                  disabled={updatingId === order.id}
+                                  className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--success)] hover:bg-[var(--bg-base)] transition-colors whitespace-nowrap"
+                                >
+                                  <CheckCircle2 size={13} /> مكتمل
+                                </button>
+                                <button
+                                  onClick={() => updateOrderStatus(order, "cancel")}
+                                  disabled={updatingId === order.id}
+                                  className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--danger)] hover:bg-[var(--bg-base)] transition-colors whitespace-nowrap"
+                                >
+                                  <XCircle size={13} /> ملغي
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <Badge variant={st.variant} size="sm">{st.label}</Badge>
+                          )}
+                        </td>
                         <td><Badge variant={pm.variant} size="sm">{pm.label}</Badge></td>
 
                         {/* Shopify Tags (from Vrobo + other apps) */}
