@@ -48,6 +48,7 @@ export interface ShopifyOrderRaw {
   shipping_address: ShopifyAddress | null;
   line_items: ShopifyLineItem[];
   fulfillments: ShopifyFulfillment[];
+  customer?: { id: number } | null;
   created_at: string;
   updated_at: string;
   cancelled_at: string | null;

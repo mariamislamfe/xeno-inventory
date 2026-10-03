@@ -23,6 +23,7 @@ export async function GET(req: NextRequest) {
     const created_at_min     = sp.get("created_at_min") ?? "";
     const created_at_max     = sp.get("created_at_max") ?? "";
     const tag                = sp.get("tag") ?? "";
+    const customer_id        = sp.get("customer_id") ?? "";
 
     let qs = `limit=${limit}`;
     if (page_info) {
@@ -35,6 +36,7 @@ export async function GET(req: NextRequest) {
       if (created_at_min)     qs += `&created_at_min=${created_at_min}`;
       if (created_at_max)     qs += `&created_at_max=${created_at_max}`;
       if (tag)                qs += `&tag=${encodeURIComponent(tag)}`;
+      if (customer_id)        qs += `&customer_id=${customer_id}`;
     }
 
     const url  = `https://${SHOP}/admin/api/${VERSION}/orders.json?${qs}`;
@@ -205,7 +207,7 @@ export async function POST(req: NextRequest) {
 
     const data  = await resp.json() as { order: ShopifyOrderRaw };
     const order = normalizeOrder(data.order);
-    return NextResponse.json({ ok: true, order }, { status: 201 });
+    return NextResponse.json({ ok: true, order, shopifyCustomerId: data.order.customer?.id ?? null }, { status: 201 });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }
