@@ -229,22 +229,14 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error ?? "فشل إنشاء الطلب");
 
-      const newOrder: XenoOrder = data.order;
-      const cid: number | null  = data.shopifyCustomerId ?? null;
+      const newOrder: XenoOrder   = data.order;
+      const existing: XenoOrder[] = (data.existingOpenOrders ?? []) as XenoOrder[];
       setPendingOrder(newOrder);
 
-      // Check for existing open orders for the same customer
-      if (cid) {
-        try {
-          const dupRes  = await fetch(`/api/shopify/orders?customer_id=${cid}&status=open&fulfillment_status=unfulfilled&limit=5`);
-          const dupData = await dupRes.json();
-          const others  = ((dupData.orders ?? []) as XenoOrder[]).filter(o => o.shopifyId !== newOrder.shopifyId);
-          if (others.length > 0) {
-            setDupOrders(others);
-            setStep("merge-prompt");
-            return; // don't close — let user decide
-          }
-        } catch { /* ignore dup-check errors */ }
+      if (existing.length > 0) {
+        setDupOrders(existing);
+        setStep("merge-prompt");
+        return; // don't close — let user decide
       }
 
       // No duplicates — normal close
