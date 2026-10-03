@@ -148,7 +148,7 @@ const GOV_EN: Record<string, string> = {
   "دمياط":"Damietta","القليوبية":"Qalyubia",
 };
 
-function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (o: XenoOrder) => void }) {
+function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (o: XenoOrder, replacedShopifyIds?: number[]) => void }) {
   const [name,          setName]          = useState("");
   const [phone,         setPhone]         = useState("");
   const [address,       setAddress]       = useState("");
@@ -237,7 +237,7 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
         const mergeData = await mergeRes.json();
         if (mergeRes.ok && mergeData.order) {
           success("تم الدمج التلقائي", `دُمج مع طلب سابق → ${mergeData.order.orderNumber}`);
-          onCreated(mergeData.order);
+          onCreated(mergeData.order, existing.map(o => o.shopifyId));
         } else {
           success("تم إنشاء الطلب", `رقم الطلب: ${newOrder.orderNumber}`);
           onCreated(newOrder);
@@ -646,7 +646,16 @@ export default function OrdersPage() {
       <CreateOrderModal
         open={createOpen}
         onClose={() => setCreateOpen(false)}
-        onCreated={(newOrder) => { setOrders((prev) => [newOrder, ...prev]); setTotalCount((c) => (c ?? 0) + 1); }}
+        onCreated={(newOrder, replacedShopifyIds) => {
+          if (replacedShopifyIds?.length) {
+            // Remove the original orders that got merged-and-cancelled, add the merged result
+            setOrders(prev => [newOrder, ...prev.filter(o => !replacedShopifyIds.includes(o.shopifyId))]);
+            setTotalCount(c => c != null ? c - (replacedShopifyIds.length - 1) : null);
+          } else {
+            setOrders(prev => [newOrder, ...prev]);
+            setTotalCount(c => (c ?? 0) + 1);
+          }
+        }}
       />
 
       {/* Filter Tabs */}
