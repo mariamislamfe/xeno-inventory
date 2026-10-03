@@ -259,7 +259,9 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
       if (!res.ok || data.error) throw new Error(data.error ?? "فشل إنشاء الطلب");
 
       const newOrder: XenoOrder   = data.order;
-      const existing: XenoOrder[] = (data.existingOpenOrders ?? []) as XenoOrder[];
+      // Filter existing open orders to only those whose name also matches
+      const existing: XenoOrder[] = ((data.existingOpenOrders ?? []) as XenoOrder[])
+        .filter((o) => namesMatch(o.customerName, name));
 
       if (existing.length > 0) {
         // Auto-merge immediately — no prompt
@@ -439,6 +441,27 @@ function tagStyle(tag: string) {
   return TAG_COLORS[key] ?? "bg-[var(--bg-base)] text-[var(--text-muted)]";
 }
 
+// Normalize Arabic name for fuzzy matching (strip diacritics, unify alef forms, collapse spaces)
+function normalizeName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[ً-ٰٟ]/g, "")   // strip tashkeel + superscript alef
+    .replace(/[أإآ]/g, "ا")                   // unify alef variants
+    .replace(/ة/g, "ه")                        // teh marbuta → heh
+    .replace(/\s+/g, " ");
+}
+
+function namesMatch(a: string, b: string): boolean {
+  const na = normalizeName(a);
+  const nb = normalizeName(b);
+  if (na === nb) return true;
+  // Accept if first word (first name) matches — handles "محمد" vs "محمد أحمد"
+  const firstA = na.split(" ")[0];
+  const firstB = nb.split(" ")[0];
+  return firstA.length >= 3 && firstA === firstB;
+}
+
 // ── Vrobo quick-filter tags ────────────────────────────────────────────
 const VROBO_TAGS = [
   { value: "",          label: "كل التاجز" },
@@ -495,18 +518,31 @@ export default function OrdersPage() {
 
   const totalPages = totalCount != null ? Math.max(1, Math.ceil(totalCount / pageSize)) : null;
 
-  // Detect mergeable groups on the currently loaded page: same phone, all open/pending
+  // Detect mergeable groups: same phone AND matching name, all open/pending
   const mergeGroups = useMemo(() => {
     const groups = new Map<string, XenoOrder[]>();
     for (const o of orders) {
       if (o.status !== "pending" && o.status !== "processing") continue;
-      const key = o.customerPhone.replace(/[^0-9]/g, "");
-      if (!key) continue;
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key)!.push(o);
+      const phone = o.customerPhone.replace(/[^0-9]/g, "");
+      if (!phone) continue;
+      // Group by phone first, then check name within group
+      if (!groups.has(phone)) groups.set(phone, []);
+      groups.get(phone)!.push(o);
     }
     const result = new Map<string, XenoOrder[]>();
-    for (const [k, v] of groups) if (v.length >= 2) result.set(k, v);
+    for (const [phone, group] of groups) {
+      if (group.length < 2) continue;
+      // Split into sub-groups where all names match each other
+      const subGroups: XenoOrder[][] = [];
+      for (const order of group) {
+        const matched = subGroups.find((sg) => namesMatch(sg[0].customerName, order.customerName));
+        if (matched) matched.push(order);
+        else subGroups.push([order]);
+      }
+      subGroups.forEach((sg, i) => {
+        if (sg.length >= 2) result.set(`${phone}_${i}`, sg);
+      });
+    }
     return result;
   }, [orders]);
 
