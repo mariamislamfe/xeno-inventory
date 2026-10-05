@@ -1,17 +1,13 @@
 import { NextResponse } from "next/server";
 import crypto from "crypto";
+import { buildAddOrderBiz, cancelJTOrder, jtPost as clientJtPost } from "@/lib/jt/client";
 
-function md5hex(str: string)    { return crypto.createHash("md5").update(str, "utf8").digest("hex"); }
 function md5base64(str: string) { return crypto.createHash("md5").update(str, "utf8").digest("base64"); }
 
 function headerDigest(bizContent: string, privateKey: string) {
   return md5base64(bizContent + privateKey);
 }
 
-function bizDigest(customerCode: string, password: string, privateKey: string) {
-  const pwdHash = md5hex(password + "jadada236t2").toUpperCase();
-  return md5base64(customerCode + pwdHash + privateKey);
-}
 
 async function jtPost(
   baseUrl: string, uuid: string, apiAccount: string, privateKey: string,
@@ -57,62 +53,43 @@ export async function GET() {
     traceResult = { data: null, jtCode: null, jtMsg: null, ok: false, error: String(err) };
   }
 
-  // ── Test 2: addOrder (tests customerCode + bizDigest) ─────────────────────────
-  // Use a clearly-fake duplicate txlogisticId so J&T rejects on "duplicate" (not "customer not found")
-  // If J&T returns "customer not found" here, the customerCode is wrong/inactive
-  const senderName  = (process.env.XENO_SENDER_NAME  ?? "TEST").slice(0, 30);
-  const senderPhone = (process.env.XENO_SENDER_PHONE ?? "01000000000").replace(/[^0-9]/g,"").replace(/^20/,"0");
-  const senderProv  = process.env.XENO_PROVINCE ?? "Cairo";
-  const senderCity  = process.env.XENO_CITY     ?? "Cairo";
-  const senderAddr  = process.env.XENO_ADDRESS  ?? "Test Address";
-
-  let addOrderResult: { data: unknown; jtCode: unknown; jtMsg: unknown; ok: boolean; customerCodeOk: boolean; error?: string } = {
+  // ── Test 2: addOrder (tests customerCode + bizDigest + payload) ───────────────
+  // Uses the exact payload real shipments use. This hits the live account, so a test
+  // order that succeeds is cancelled immediately.
+  let addOrderResult: { data: unknown; jtCode: unknown; jtMsg: unknown; ok: boolean; customerCodeOk: boolean; cancelled?: boolean; error?: string } = {
     data: null, jtCode: null, jtMsg: null, ok: false, customerCodeOk: false,
   };
-  try {
-    const { data } = await jtPost(BASE_URL, UUID, API_ACCOUNT, PRIVATE_KEY, "/api/order/addOrder", {
-      customerCode: CUSTOMER_CODE,
-      digest:       bizDigest(CUSTOMER_CODE, PASSWORD, PRIVATE_KEY),
-      txlogisticId: `XENO-TEST-${Date.now()}`,
-      operateType:  1,
-      serviceType:  process.env.JT_SERVICE_TYPE ?? "02",
-      orderType:    "2",
-      expressType:  "EZ",
-      deliveryType: "04",
-      payType:      process.env.JT_PAY_TYPE ?? "PP_PM",
-      fodMoney:     "100",
-      goodsType:    process.env.JT_GOODS_TYPE ?? "ITN16",
-      weight:       "0.5",
-      totalQuantity: "1",
-      remark:       "XENO API TEST",
-      sender: {
-        name: senderName, mobile: senderPhone, phone: senderPhone,
-        countryCode: "EGY", prov: senderProv, city: senderCity,
-        area: senderCity, address: senderAddr, street: senderAddr,
-      },
-      receiver: {
-        name: "TEST RECEIVER", mobile: "01000000001", phone: "01000000001",
-        countryCode: "EGY", prov: "Cairo", city: "Cairo",
-        area: "Cairo", address: "Test Street", street: "Test Street",
-      },
-      items: [{
-        itemName: "Test Item", englishName: "Test Item",
-        itemType: process.env.JT_GOODS_TYPE ?? "ITN16",
-        number: 1, itemValue: "100", priceCurrency: "EGP",
-      }],
-    });
-
-    // "customer not found" → customerCode wrong / not activated
-    // "duplicate" / "already exists" → customerCode recognized ✓ (order already exists)
-    // code=1 → unlikely for a test order but would mean success
-    const customerNotFound = String(data?.msg ?? "").toLowerCase().includes("customer") ||
-                             String(data?.msg ?? "").toLowerCase().includes("not found") ||
-                             data?.code === "400" || data?.code === 400;
-    const customerCodeOk   = !customerNotFound && (data?.code !== undefined);
-
-    addOrderResult = { data, jtCode: data?.code, jtMsg: data?.msg, ok: data?.code === "1" || data?.code === 1, customerCodeOk };
-  } catch (err) {
-    addOrderResult = { data: null, jtCode: null, jtMsg: null, ok: false, customerCodeOk: false, error: String(err) };
+  const testOrderNumber = `XENO-TEST-${Date.now()}`;
+  const built = buildAddOrderBiz({
+    orderNumber:  testOrderNumber,
+    customerName: "TEST RECEIVER",
+    phone:        "01000000001",
+    address:      "مدينة نصر، شارع عباس العقاد",
+    city:         "مدينة نصر",
+    governorate:  "القاهرة",
+    items:        [{ name: "Test Item", qty: 1 }],
+    totalAmount:  100,
+  });
+  if (!built.ok) {
+    addOrderResult = { ...addOrderResult, error: built.error };
+  } else {
+    try {
+      const data = await clientJtPost("/api/order/addOrder", built.biz);
+      // "customer not found" → customerCode wrong / not activated
+      const customerNotFound = String(data?.msg ?? "").toLowerCase().includes("customer") ||
+                               String(data?.msg ?? "").toLowerCase().includes("not found") ||
+                               data?.code === "400" || data?.code === 400 || String(data?.code) === "145003031";
+      const customerCodeOk   = !customerNotFound && (data?.code !== undefined);
+      const ok = data?.code === "1" || data?.code === 1;
+      let cancelled: boolean | undefined;
+      if (ok) {
+        const c = await cancelJTOrder(testOrderNumber);
+        cancelled = c.ok && (c.data?.code === "1" || c.data?.code === 1);
+      }
+      addOrderResult = { data, jtCode: data?.code, jtMsg: data?.msg, ok, customerCodeOk, cancelled };
+    } catch (err) {
+      addOrderResult = { ...addOrderResult, error: String(err) };
+    }
   }
 
   const overallOk = traceResult.ok && addOrderResult.customerCodeOk;
@@ -135,8 +112,11 @@ export async function GET() {
     addOrderTest: {
       description: "addOrder auth — يتحقق من customerCode + digest (bizDigest)",
       customerCodeOk: addOrderResult.customerCodeOk,
+      orderCreated:   addOrderResult.ok,
+      testOrderCancelled: addOrderResult.cancelled,
       jtCode:  addOrderResult.jtCode,
       jtMsg:   addOrderResult.jtMsg,
+      error:   addOrderResult.error,
     },
     envCheck: {
       JT_BASE_URL:      BASE_URL   ? "✓ موجود" : "❌ مفقود",

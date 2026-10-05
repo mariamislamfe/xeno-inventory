@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { normalizeOrder } from "@/lib/shopify/orders";
 import type { ShopifyOrderRaw, XenoOrder } from "@/lib/shopify/orders";
+import { phoneKey, toE164, toLocal } from "@/lib/phone";
 
 const SHOP    = process.env.SHOPIFY_SHOP;
 const TOKEN   = process.env.SHOPIFY_ACCESS_TOKEN;
@@ -81,6 +82,7 @@ const GOV_EN: Record<string, string> = {
   "كفر الشيخ":     "Kafr el-Sheikh",
   "الإسماعيلية":   "Ismailia",
   "بورسعيد":       "Port Said",
+  "بور سعيد":      "Port Said",
   "السويس":        "Suez",
   "شمال سيناء":    "North Sinai",
   "جنوب سيناء":    "South Sinai",
@@ -95,13 +97,13 @@ const GOV_EN: Record<string, string> = {
   "البحر الأحمر":  "Red Sea",
   "الوادي الجديد": "New Valley",
   "مطروح":         "Matrouh",
+  "مرسى مطروح":    "Matrouh",
   "دمياط":         "Damietta",
   "القليوبية":     "Qalyubia",
 };
 
 async function resolveCustomerId(shop: string, token: string, version: string, firstName: string, lastName: string, rawPhone: string): Promise<number | null> {
-  const digits = rawPhone.replace(/[^0-9]/g, "");
-  const e164   = digits.startsWith("0") ? `+20${digits.slice(1)}` : `+${digits}`;
+  const e164 = toE164(rawPhone);
 
   try {
     const r = await fetch(
@@ -152,8 +154,12 @@ export async function POST(req: NextRequest) {
     const lastName    = nameParts.slice(1).join(" ") || "";
 
     // Compute phone-based identifiers early (used for both dup-check and order creation)
-    const digits        = phone.replace(/[^0-9]/g, "");
-    const fallbackEmail = `${digits}@xeno-orders.com`;
+    // Same number in any format (+20 / 0020 / 0) → same fallback email
+    const fallbackEmail = `${toLocal(phone)}@xeno-orders.com`;
+    // Older orders stamped the email with the digits exactly as typed
+    const legacyEmails = [...new Set([phone.replace(/[^0-9]/g, ""), `20${phoneKey(phone)}`, phoneKey(phone)])]
+      .map((d) => `${d}@xeno-orders.com`)
+      .filter((e) => e !== fallbackEmail);
 
     const customerId  = await resolveCustomerId(SHOP, TOKEN, VERSION, firstName, lastName, phone);
 
@@ -181,12 +187,13 @@ export async function POST(req: NextRequest) {
 
     // Method 2: by fallback email we stamp on every modal-created order
     await fetchOpenOrders(`email=${encodeURIComponent(fallbackEmail)}`);
+    for (const e of legacyEmails) await fetchOpenOrders(`email=${encodeURIComponent(e)}`);
 
 
     const addrBlock = {
       first_name:   firstName,
       last_name:    lastName || firstName,
-      phone:        phone.replace(/[^0-9+]/g, ""),
+      phone:        toE164(phone),
       address1:     address1 || city,
       city,
       province:     GOV_EN[province] ?? province ?? city,

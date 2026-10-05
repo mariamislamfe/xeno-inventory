@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { normalizeOrder } from "@/lib/shopify/orders";
 import type { ShopifyOrderRaw } from "@/lib/shopify/orders";
+import { toE164 } from "@/lib/phone";
 
 const SHOP    = process.env.SHOPIFY_SHOP!;
 const TOKEN   = process.env.SHOPIFY_ACCESS_TOKEN!;
@@ -69,8 +70,7 @@ export async function POST(req: NextRequest) {
     // Use first order's customer & address
     const base    = orders[0];
     const addr    = base.shipping_address ?? base.billing_address;
-    const digits  = (base.phone ?? addr?.phone ?? "").replace(/[^0-9]/g, "");
-    const phone   = digits ? (digits.startsWith("0") ? `+20${digits.slice(1)}` : `+${digits}`) : undefined;
+    const phone   = toE164(base.phone ?? addr?.phone) || undefined;
 
     const addrBlock = addr ? {
       first_name:   addr.first_name,

@@ -2,8 +2,10 @@
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import Link from "next/link";
-import { RefreshCw, Eye, Printer, Truck, Loader2, Search, ChevronDown, Tag, X, Plus, Save, CheckCircle2, XCircle, Merge } from "lucide-react";
-import { getCities, getAreas, EG_PROVINCES } from "@/lib/data/egypt-divisions";
+import dynamic from "next/dynamic";
+import { RefreshCw, Eye, Printer, Truck, Loader2, Search, ChevronDown, Tag, X, Plus, Save, CheckCircle2, XCircle, Merge, Trash2, BadgeCheck } from "lucide-react";
+import type { AddressValue } from "@/components/orders/AddressPicker";
+import { phoneKey } from "@/lib/phone";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { Badge } from "@/components/ui/Badge";
@@ -92,69 +94,16 @@ function ProductPicker({ onSelect }: { onSelect: (title: string, variantTitle: s
   );
 }
 
-// ── 3-level Egyptian Address Picker ────────────────────────────────────
-interface AddressPickerProps {
-  province: string; city: string; area: string;
-  onProvinceChange: (v: string) => void;
-  onCityChange: (v: string) => void;
-  onAreaChange: (v: string) => void;
-}
-
-function AddressPicker({ province, city, area, onProvinceChange, onCityChange, onAreaChange }: AddressPickerProps) {
-  const cities = province ? getCities(province) : [];
-  const areas  = (province && city) ? getAreas(province, city) : [];
-
-  function handleProvinceChange(v: string) {
-    onProvinceChange(v);
-    onCityChange("");
-    onAreaChange("");
-  }
-  function handleCityChange(v: string) {
-    onCityChange(v);
-    onAreaChange("");
-  }
-
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:col-span-2">
-      <div>
-        <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">المحافظة *</label>
-        <select
-          value={province}
-          onChange={(e) => handleProvinceChange(e.target.value)}
-          className="form-input appearance-none"
-        >
-          <option value="">— اختر المحافظة —</option>
-          {EG_PROVINCES.map((p) => <option key={p} value={p}>{p}</option>)}
-        </select>
-      </div>
-      <div>
-        <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">المدينة *</label>
-        <select
-          value={city}
-          onChange={(e) => handleCityChange(e.target.value)}
-          className="form-input appearance-none"
-          disabled={!province}
-        >
-          <option value="">— اختر المدينة —</option>
-          {cities.map((c) => <option key={c} value={c}>{c}</option>)}
-        </select>
-      </div>
-      <div>
-        <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">المنطقة</label>
-        <select
-          value={area}
-          onChange={(e) => onAreaChange(e.target.value)}
-          className="form-input appearance-none"
-          disabled={!city}
-        >
-          <option value="">— اختر المنطقة —</option>
-          {areas.map((a) => <option key={a} value={a}>{a}</option>)}
-        </select>
-      </div>
+// ── 3-level Egyptian Address Picker (lazy: carries the full J&T address list) ──
+const AddressPicker = dynamic(() => import("@/components/orders/AddressPicker"), {
+  ssr: false,
+  loading: () => (
+    <div className="sm:col-span-2 flex items-center gap-2 p-3 text-xs text-[var(--text-muted)]">
+      <Loader2 size={12} className="animate-spin" />
+      جارٍ تحميل العناوين...
     </div>
-  );
-}
-
+  ),
+});
 
 // ── Create Order Modal ─────────────────────────────────────────────────
 interface NewOrderItem { title: string; variantId?: number; qty: number; price: number }
@@ -163,11 +112,11 @@ const GOV_EN: Record<string, string> = {
   "القاهرة":"Cairo","الإسكندرية":"Alexandria","الجيزة":"Giza",
   "الشرقية":"Al Sharqia","الدقهلية":"Dakahlia","البحيرة":"Beheira",
   "المنوفية":"Monufia","الغربية":"Gharbia","كفر الشيخ":"Kafr el-Sheikh",
-  "الإسماعيلية":"Ismailia","بورسعيد":"Port Said","السويس":"Suez",
+  "الإسماعيلية":"Ismailia","بورسعيد":"Port Said","بور سعيد":"Port Said","السويس":"Suez",
   "شمال سيناء":"North Sinai","جنوب سيناء":"South Sinai","الفيوم":"Faiyum",
   "بني سويف":"Beni Suef","المنيا":"Minya","أسيوط":"Asyut",
   "سوهاج":"Sohag","قنا":"Qena","الأقصر":"Luxor","أسوان":"Aswan",
-  "البحر الأحمر":"Red Sea","الوادي الجديد":"New Valley","مطروح":"Matrouh",
+  "البحر الأحمر":"Red Sea","الوادي الجديد":"New Valley","مطروح":"Matrouh","مرسى مطروح":"Matrouh",
   "دمياط":"Damietta","القليوبية":"Qalyubia",
 };
 
@@ -229,17 +178,12 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productTotal]);
 
-  function handleGovChange(v: string) {
-    setGov(v);
-    setCity("");
-    setArea("");
-    fetchShipping(v, productTotal);
-  }
-
-  function handleCityChange(v: string) {
-    setCity(v);
-    setArea("");
-    if (gov) fetchShipping(gov, productTotal);
+  // Shipping rates depend on the governorate only
+  function handleAddressChange(next: AddressValue) {
+    if (next.province !== gov) fetchShipping(next.province, productTotal);
+    setGov(next.province);
+    setCity(next.city);
+    setArea(next.area);
   }
 
   async function handleCreate() {
@@ -323,10 +267,8 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
             </div>
             {/* 3-level address picker: Province → City → Area */}
             <AddressPicker
-              province={gov} city={city} area={area}
-              onProvinceChange={handleGovChange}
-              onCityChange={handleCityChange}
-              onAreaChange={setArea}
+              value={{ province: gov, city, area }}
+              onChange={handleAddressChange}
             />
             <div className="sm:col-span-2">
               <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">العنوان التفصيلي (الشارع / العقار) *</label>
@@ -409,6 +351,28 @@ const STATUS_DISPLAY: Record<string, { label: string; variant: "success" | "warn
   cancelled:  { label: "ملغي",   variant: "danger"  },
   returned:   { label: "مرتجع",  variant: "neutral" },
 };
+
+// ── Order actions (same action for one order or a whole selection) ─────
+type OrderAction = "confirm" | "fulfill" | "cancel" | "delete";
+
+const ACTION_LABELS: Record<OrderAction, { button: string; done: (n: number) => string; ask?: (n: number) => string }> = {
+  confirm: { button: "تأكيد",       done: (n) => n === 1 ? "تم تأكيد الطلب ✓"   : `تم تأكيد ${n} طلب ✓` },
+  fulfill: { button: "مكتمل",       done: (n) => n === 1 ? "تم إكمال الطلب ✓"   : `تم إكمال ${n} طلب ✓` },
+  cancel:  { button: "إلغاء الطلبات", done: (n) => n === 1 ? "تم إلغاء الطلب"      : `تم إلغاء ${n} طلب`,
+             ask:  (n) => `سيتم إلغاء ${n} طلب على Shopify. متأكد؟` },
+  delete:  { button: "حذف",         done: (n) => n === 1 ? "تم حذف الطلب"        : `تم حذف ${n} طلب`,
+             ask:  (n) => `سيتم إلغاء وحذف ${n} طلب نهائياً من Shopify، ولا يمكن التراجع عن الحذف. متأكد؟` },
+};
+
+async function runOrderAction(order: XenoOrder, action: OrderAction): Promise<void> {
+  const res = await fetch("/api/shopify/orders/status", {
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body:    JSON.stringify({ shopifyId: order.shopifyId, action }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) throw new Error(data.error ?? "فشل تحديث الحالة");
+}
 
 const PAYMENT_DISPLAY: Record<string, { label: string; variant: "success" | "danger" | "warning" | "neutral" }> = {
   paid:     { label: "مدفوع",     variant: "success" },
@@ -518,12 +482,15 @@ export default function OrdersPage() {
 
   const totalPages = totalCount != null ? Math.max(1, Math.ceil(totalCount / pageSize)) : null;
 
+  // Count only ids still on the page (merges/deletes can remove selected orders)
+  const selectedCount = useMemo(() => orders.filter((o) => selectedIds.has(o.id)).length, [orders, selectedIds]);
+
   // Detect mergeable groups: same phone AND matching name, all open/pending
   const mergeGroups = useMemo(() => {
     const groups = new Map<string, XenoOrder[]>();
     for (const o of orders) {
       if (o.status !== "pending" && o.status !== "processing") continue;
-      const phone = o.customerPhone.replace(/[^0-9]/g, "");
+      const phone = phoneKey(o.customerPhone); // +20 / 0020 / 0 prefixes → same key
       if (!phone) continue;
       // Group by phone first, then check name within group
       if (!groups.has(phone)) groups.set(phone, []);
@@ -546,24 +513,73 @@ export default function OrdersPage() {
     return result;
   }, [orders]);
 
-  async function updateOrderStatus(order: XenoOrder, action: "fulfill" | "cancel") {
+  // Reflect a successful action in the local list (no refetch needed)
+  function applyActionLocally(ids: Set<string>, action: OrderAction) {
+    if (action === "delete") {
+      setOrders((prev) => prev.filter((o) => !ids.has(o.id)));
+      setTotalCount((c) => (c != null ? c - ids.size : null));
+      return;
+    }
+    setOrders((prev) => prev.map((o) => {
+      if (!ids.has(o.id)) return o;
+      if (action === "fulfill") return { ...o, status: "delivered" };
+      if (action === "cancel")  return { ...o, status: "cancelled" };
+      const tags = o.tags.filter((t) => !["cancelled", "postponed", "ملغي"].includes(t.toLowerCase()));
+      return { ...o, tags: tags.includes("confirmed") ? tags : [...tags, "confirmed"] };
+    }));
+  }
+
+  async function updateOrderStatus(order: XenoOrder, action: OrderAction) {
     setUpdatingId(order.id);
     try {
-      const res = await fetch("/api/shopify/orders/status", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ shopifyId: order.shopifyId, action }),
-      });
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error ?? "فشل تحديث الحالة");
-
-      const newStatus = action === "fulfill" ? "delivered" : "cancelled";
-      setOrders((prev) => prev.map((o) => o.id === order.id ? { ...o, status: newStatus } : o));
-      success("تم التحديث", action === "fulfill" ? "تم تأكيل الطلب ✓" : "تم إلغاء الطلب");
+      await runOrderAction(order, action);
+      applyActionLocally(new Set([order.id]), action);
+      success("تم التحديث", ACTION_LABELS[action].done(1));
     } catch (err) {
       error("خطأ", String(err));
     } finally {
       setUpdatingId(null);
+    }
+  }
+
+  // ── Bulk actions on selected orders ──
+  const [bulkConfirm,  setBulkConfirm]  = useState<OrderAction | null>(null);
+  const [bulkProgress, setBulkProgress] = useState<{ action: OrderAction; done: number; total: number } | null>(null);
+
+  async function runBulk(action: OrderAction) {
+    setBulkConfirm(null);
+    const targets = orders.filter((o) => selectedIds.has(o.id));
+    if (targets.length === 0) return;
+
+    setBulkProgress({ action, done: 0, total: targets.length });
+    const succeeded = new Set<string>();
+    const failed: { order: XenoOrder; message: string }[] = [];
+
+    // Small worker pool: Shopify REST allows ~2 requests/second
+    let next = 0;
+    async function worker() {
+      while (next < targets.length) {
+        const order = targets[next++];
+        try {
+          await runOrderAction(order, action);
+          succeeded.add(order.id);
+        } catch (err) {
+          failed.push({ order, message: err instanceof Error ? err.message : String(err) });
+        }
+        setBulkProgress((p) => (p ? { ...p, done: p.done + 1 } : p));
+      }
+    }
+    await Promise.all([worker(), worker()]);
+
+    applyActionLocally(succeeded, action);
+    // Keep only the failed orders selected so they can be retried
+    setSelectedIds(new Set(failed.map((f) => f.order.id)));
+    setBulkProgress(null);
+
+    if (succeeded.size > 0) success("تم التنفيذ", ACTION_LABELS[action].done(succeeded.size));
+    if (failed.length > 0) {
+      const sample = failed.slice(0, 3).map((f) => f.order.orderNumber).join("، ");
+      error(`فشل ${failed.length} طلب`, `${sample}${failed.length > 3 ? " ..." : ""} — ${failed[0].message.slice(0, 120)}`);
     }
   }
 
@@ -595,6 +611,7 @@ export default function OrdersPage() {
       if (data.error) throw new Error(data.error);
 
       setOrders(data.orders);
+      setSelectedIds(new Set()); // selection is per loaded page
       setHasMore(data.has_more ?? false);
       setCurrentPage(page);
 
@@ -657,8 +674,6 @@ export default function OrdersPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mergeGroups.size]);
 
-  // Clear selection whenever the data set changes
-  useEffect(() => { setSelectedIds(new Set()); }, [orders]);
 
   function toggleSelect(id: string) {
     setSelectedIds((prev) => {
@@ -669,7 +684,7 @@ export default function OrdersPage() {
   }
 
   function toggleSelectAll() {
-    if (selectedIds.size === orders.length) {
+    if (selectedCount === orders.length) {
       setSelectedIds(new Set());
     } else {
       setSelectedIds(new Set(orders.map((o) => o.id)));
@@ -803,20 +818,63 @@ export default function OrdersPage() {
         )}
       </div>
 
-      {/* Selection bar */}
-      {selectedIds.size > 0 && (
-        <div className="card p-3 flex items-center gap-3 border-[var(--primary)] bg-(--primary-light)">
-          <span className="text-xs font-semibold text-[var(--primary)]">
-            تم تحديد {selectedIds.size} طلب
-          </span>
-          <button
-            onClick={() => setSelectedIds(new Set())}
-            className="text-xs text-[var(--text-muted)] hover:text-[var(--danger)] transition-colors"
-          >
-            إلغاء التحديد
-          </button>
+      {/* Selection bar — bulk actions apply to every selected order */}
+      {(selectedCount > 0 || bulkProgress) && (
+        <div className="card p-3 flex items-center gap-3 flex-wrap border-[var(--primary)] bg-(--primary-light)">
+          {bulkProgress ? (
+            <span className="flex items-center gap-2 text-xs font-semibold text-[var(--primary)]">
+              <Loader2 size={13} className="animate-spin" />
+              جارٍ التنفيذ ({ACTION_LABELS[bulkProgress.action].button}) {bulkProgress.done} / {bulkProgress.total}
+            </span>
+          ) : (
+            <>
+              <span className="text-xs font-semibold text-[var(--primary)]">
+                تم تحديد {selectedCount} طلب
+              </span>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <Button variant="secondary" size="sm" icon={<BadgeCheck size={13} />} onClick={() => runBulk("confirm")}>
+                  {ACTION_LABELS.confirm.button}
+                </Button>
+                <Button variant="secondary" size="sm" icon={<CheckCircle2 size={13} />} onClick={() => runBulk("fulfill")}>
+                  {ACTION_LABELS.fulfill.button}
+                </Button>
+                <Button variant="secondary" size="sm" icon={<XCircle size={13} />} onClick={() => setBulkConfirm("cancel")}>
+                  {ACTION_LABELS.cancel.button}
+                </Button>
+                <Button variant="danger" size="sm" icon={<Trash2 size={13} />} onClick={() => setBulkConfirm("delete")}>
+                  {ACTION_LABELS.delete.button}
+                </Button>
+              </div>
+              <button
+                onClick={() => setSelectedIds(new Set())}
+                className="text-xs text-[var(--text-muted)] hover:text-[var(--danger)] transition-colors mr-auto"
+              >
+                إلغاء التحديد
+              </button>
+            </>
+          )}
         </div>
       )}
+
+      {/* Confirm destructive bulk actions */}
+      <Modal
+        open={bulkConfirm !== null}
+        onClose={() => setBulkConfirm(null)}
+        title={bulkConfirm ? `${ACTION_LABELS[bulkConfirm].button} — ${selectedCount} طلب` : ""}
+        size="sm"
+        footer={bulkConfirm && (
+          <>
+            <Button variant="secondary" onClick={() => setBulkConfirm(null)}>رجوع</Button>
+            <Button variant="danger" onClick={() => runBulk(bulkConfirm)}>
+              {ACTION_LABELS[bulkConfirm].button}
+            </Button>
+          </>
+        )}
+      >
+        <p className="text-sm text-[var(--text-secondary)]">
+          {bulkConfirm && ACTION_LABELS[bulkConfirm].ask?.(selectedCount)}
+        </p>
+      </Modal>
 
       {/* Table */}
       <div className="card">
@@ -837,8 +895,9 @@ export default function OrdersPage() {
                       <input
                         type="checkbox"
                         className="rounded"
-                        checked={orders.length > 0 && selectedIds.size === orders.length}
-                        ref={(el) => { if (el) el.indeterminate = selectedIds.size > 0 && selectedIds.size < orders.length; }}
+                        checked={orders.length > 0 && selectedCount === orders.length}
+                        ref={(el) => { if (el) el.indeterminate = selectedCount > 0 && selectedCount < orders.length; }}
+                        disabled={bulkProgress !== null}
                         onChange={toggleSelectAll}
                       />
                     </th>
@@ -866,6 +925,7 @@ export default function OrdersPage() {
                             className="rounded"
                             checked={selectedIds.has(order.id)}
                             onChange={() => toggleSelect(order.id)}
+                            disabled={bulkProgress !== null}
                           />
                         </td>
                         <td>
@@ -918,6 +978,12 @@ export default function OrdersPage() {
                                   {/* backdrop to close on outside click */}
                                   <div className="fixed inset-0 z-10" onClick={() => setStatusMenuId(null)} />
                                   <div className="absolute z-20 top-full mt-1 right-0 flex flex-col bg-[var(--bg-card)] border border-[var(--border-color)] rounded-md shadow-lg overflow-hidden min-w-[110px]">
+                                    <button
+                                      onClick={() => { setStatusMenuId(null); updateOrderStatus(order, "confirm"); }}
+                                      className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--primary)] hover:bg-[var(--bg-base)] transition-colors whitespace-nowrap"
+                                    >
+                                      <BadgeCheck size={13} /> مؤكد
+                                    </button>
                                     <button
                                       onClick={() => { setStatusMenuId(null); updateOrderStatus(order, "fulfill"); }}
                                       className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--success)] hover:bg-[var(--bg-base)] transition-colors whitespace-nowrap"
