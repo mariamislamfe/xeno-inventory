@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { normalizeOrder } from "@/lib/shopify/orders";
 import type { ShopifyOrderRaw } from "@/lib/shopify/orders";
+import { withShipmentTracking } from "@/lib/shipments";
 
 const SHOP    = process.env.SHOPIFY_SHOP;
 const TOKEN   = process.env.SHOPIFY_ACCESS_TOKEN;
@@ -24,7 +25,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     if (!resp.ok) return NextResponse.json({ error: `Shopify ${resp.status}` }, { status: resp.status });
 
     const data  = await resp.json() as { order: ShopifyOrderRaw };
-    const order = normalizeOrder(data.order);
+    const [order] = await withShipmentTracking([normalizeOrder(data.order)]);
     return NextResponse.json({ order });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });

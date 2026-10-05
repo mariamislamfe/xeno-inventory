@@ -6,6 +6,7 @@ import dynamic from "next/dynamic";
 import { RefreshCw, Eye, Printer, Truck, Loader2, Search, ChevronDown, Tag, X, Plus, Save, CheckCircle2, XCircle, Merge, Trash2, BadgeCheck } from "lucide-react";
 import type { AddressValue } from "@/components/orders/AddressPicker";
 import { phoneKey } from "@/lib/phone";
+import { ShipModal } from "@/components/orders/ShipModal";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { Badge } from "@/components/ui/Badge";
@@ -543,6 +544,7 @@ export default function OrdersPage() {
   }
 
   // ── Bulk actions on selected orders ──
+  const [shipOrder,    setShipOrder]    = useState<XenoOrder | null>(null);
   const [bulkConfirm,  setBulkConfirm]  = useState<OrderAction | null>(null);
   const [bulkProgress, setBulkProgress] = useState<{ action: OrderAction; done: number; total: number } | null>(null);
 
@@ -856,6 +858,19 @@ export default function OrdersPage() {
         </div>
       )}
 
+      {/* Ship straight from the list (truck icon) */}
+      {shipOrder && (
+        <ShipModal
+          open
+          order={shipOrder}
+          onClose={() => setShipOrder(null)}
+          onDone={(tracking) => {
+            const id = shipOrder.id;
+            setOrders((prev) => prev.map((o) => o.id === id ? { ...o, trackingNumber: tracking, shippingProvider: "J&T Express" } : o));
+          }}
+        />
+      )}
+
       {/* Confirm destructive bulk actions */}
       <Modal
         open={bulkConfirm !== null}
@@ -1054,11 +1069,12 @@ export default function OrdersPage() {
                               </button>
                             ) : (
                               order.status !== "delivered" && order.status !== "cancelled" && (
-                                <Link href={`/dashboard/orders/${order.id}`}
+                                <button
+                                  onClick={() => setShipOrder(order)}
                                   className="p-1.5 rounded-[var(--radius-sm)] text-[var(--text-muted)] hover:bg-[var(--primary-light)] hover:text-[var(--primary)] transition-colors"
                                   title="إرسال للشحن">
                                   <Truck size={14} />
-                                </Link>
+                                </button>
                               )
                             )}
                           </div>
