@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/client";
 import { createJTOrder } from "@/lib/jt/client";
+import { saveShipment } from "@/lib/shipments";
 
 export async function POST(req: NextRequest) {
   const { orders } = await req.json();
@@ -23,6 +24,38 @@ export async function POST(req: NextRequest) {
         order_number:   o.order_number,
         ok:             true,
         trackingNumber: existing.tracking_number,
+        error:          undefined,
+        skipped:        true,
+      });
+      continue;
+    }
+
+    // Shipped before but the shipments row never got saved — recover the tracking
+    // number from the activity log instead of creating a second J&T order
+    const { data: logged } = await supabaseAdmin
+      .from("activity_log")
+      .select("metadata")
+      .eq("type", "shipment")
+      .contains("metadata", { results: [{ order_number: o.order_number, ok: true }] })
+      .order("created_at", { ascending: false })
+      .limit(1);
+    const prevTracking = (logged?.[0]?.metadata as { results?: { order_number: string; trackingNumber?: string }[] } | undefined)
+      ?.results?.find((r) => r.order_number === o.order_number && r.trackingNumber)?.trackingNumber;
+
+    if (prevTracking) {
+      await saveShipment({
+        shopify_order_id: Number(o.shopify_order_id),
+        order_number:     o.order_number,
+        customer_name:    o.customer_name,
+        phone:            o.phone,
+        provider:         "J&T Express",
+        status:           "picked_up",
+        tracking_number:  prevTracking,
+      });
+      results.push({
+        order_number:   o.order_number,
+        ok:             true,
+        trackingNumber: prevTracking,
         error:          undefined,
         skipped:        true,
       });
@@ -55,16 +88,17 @@ export async function POST(req: NextRequest) {
       totalAmount:  shopifyOrder?.total        ?? o.total       ?? 0,
     });
 
-    // Save shipment record (UNIQUE constraint on shopify_order_id prevents duplicates)
-    await supabaseAdmin.from("shipments").upsert({
-      shopify_order_id: o.shopify_order_id,
+    // Save shipment record so the tracking number shows in the orders list
+    const saveErr = await saveShipment({
+      shopify_order_id: Number(o.shopify_order_id),
       order_number:     o.order_number,
       customer_name:    shopifyOrder?.customerName ?? o.customer_name,
       phone:            shopifyOrder?.phone        ?? o.phone,
       provider:         "J&T Express",
       status:           jtResult.ok && jtResult.trackingNumber ? "picked_up" : "pending",
       tracking_number:  jtResult.trackingNumber ?? null,
-    }, { onConflict: "shopify_order_id" });
+    });
+    if (saveErr) console.error("[ship] shipments save error:", o.order_number, saveErr);
 
     // If we got a tracking number, send WhatsApp message
     if (jtResult.ok && jtResult.trackingNumber) {
@@ -80,6 +114,7 @@ export async function POST(req: NextRequest) {
       ok:             jtResult.ok,
       trackingNumber: jtResult.trackingNumber,
       error:          jtResult.error,
+      saveError:      saveErr ?? undefined,
       skipped:        false,
     });
   }
