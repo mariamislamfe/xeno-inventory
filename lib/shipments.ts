@@ -24,3 +24,30 @@ export async function withShipmentTracking(orders: XenoOrder[]): Promise<XenoOrd
     return orders; // shipments table unavailable — show Shopify data as-is
   }
 }
+
+export interface ShipmentRecord {
+  shopify_order_id: number;
+  order_number:     string;
+  customer_name?:   string | null;
+  phone?:           string | null;
+  provider:         string;
+  status:           string;
+  tracking_number:  string | null;
+}
+
+// Save one shipment per order without relying on ON CONFLICT — the live table may be
+// missing the UNIQUE(shopify_order_id) constraint, which makes upsert fail silently.
+export async function saveShipment(rec: ShipmentRecord): Promise<string | null> {
+  const { data: rows, error: selErr } = await supabaseAdmin
+    .from("shipments")
+    .select("id")
+    .eq("shopify_order_id", rec.shopify_order_id)
+    .limit(1);
+  if (selErr) return selErr.message;
+
+  const row = { ...rec };
+  const { error } = rows?.length
+    ? await supabaseAdmin.from("shipments").update(row).eq("shopify_order_id", rec.shopify_order_id)
+    : await supabaseAdmin.from("shipments").insert(row);
+  return error ? error.message : null;
+}

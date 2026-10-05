@@ -16,10 +16,16 @@ async function getOrder(id: number): Promise<ShopifyOrderRaw | null> {
   return d.order;
 }
 
-async function cancelOrder(id: number) {
+// The merged order replaces the originals, so remove them from Shopify entirely.
+// Shopify only deletes cancelled orders, so cancel first.
+async function removeOrder(id: number): Promise<boolean> {
   await fetch(`https://${SHOP}/admin/api/${VERSION}/orders/${id}/cancel.json`, {
     method: "POST", headers: h(), body: JSON.stringify({}),
   });
+  const r = await fetch(`https://${SHOP}/admin/api/${VERSION}/orders/${id}.json`, {
+    method: "DELETE", headers: h(),
+  });
+  return r.ok;
 }
 
 // POST /api/shopify/orders/merge
@@ -117,10 +123,13 @@ export async function POST(req: NextRequest) {
 
     const created = await createResp.json() as { order: ShopifyOrderRaw };
 
-    // Cancel original orders
-    await Promise.all(shopifyIds.map(cancelOrder));
+    // Delete the original orders (one at a time to stay under Shopify's rate limit)
+    const deletedIds: number[] = [];
+    for (const id of shopifyIds) {
+      if (await removeOrder(Number(id))) deletedIds.push(Number(id));
+    }
 
-    return NextResponse.json({ ok: true, order: normalizeOrder(created.order) }, { status: 201 });
+    return NextResponse.json({ ok: true, order: normalizeOrder(created.order), deletedIds }, { status: 201 });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }

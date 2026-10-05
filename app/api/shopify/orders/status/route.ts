@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/client";
+import { requireAdmin } from "@/lib/auth/requireAdmin";
 
 const SHOP    = process.env.SHOPIFY_SHOP!;
 const TOKEN   = process.env.SHOPIFY_ACCESS_TOKEN!;
@@ -132,6 +133,9 @@ export async function POST(req: NextRequest) {
     } else if (action === "confirm") {
       result = await confirmOrder(Number(shopifyId));
     } else if (action === "delete") {
+      // Deleting orders is a manager-only action
+      const auth = await requireAdmin();
+      if (!auth.ok) return auth.response;
       result = await deleteOrder(Number(shopifyId));
     } else {
       return NextResponse.json({ error: "invalid action" }, { status: 400 });

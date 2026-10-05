@@ -19,6 +19,7 @@ export function ShipModal({ open, order, onClose, onDone }: ShipModalProps) {
   const [step,     setStep]     = useState<"confirm" | "loading" | "success">("confirm");
   const [tracking, setTracking] = useState("");
   const [errMsg,   setErrMsg]   = useState("");
+  const [already,  setAlready]  = useState(false);
   const { error } = useToast();
 
   async function ship() {
@@ -47,6 +48,7 @@ export function ShipModal({ open, order, onClose, onDone }: ShipModalProps) {
       const r = data.results?.[0];
       if (r?.trackingNumber) {
         setTracking(r.trackingNumber);
+        setAlready(Boolean(r.skipped));
         setStep("success");
         onDone(r.trackingNumber);
       } else {
@@ -59,7 +61,7 @@ export function ShipModal({ open, order, onClose, onDone }: ShipModalProps) {
     }
   }
 
-  function close() { setStep("confirm"); setTracking(""); setErrMsg(""); onClose(); }
+  function close() { setStep("confirm"); setTracking(""); setErrMsg(""); setAlready(false); onClose(); }
 
   return (
     <Modal open={open} onClose={step === "loading" ? () => {} : close}
@@ -118,16 +120,18 @@ export function ShipModal({ open, order, onClose, onDone }: ShipModalProps) {
               <CheckCircle2 size={30} className="text-[var(--success)]" />
             </div>
             <div className="text-center">
-              <p className="text-sm font-semibold text-[var(--text-primary)]">تم إنشاء الشحنة بنجاح</p>
+              <p className="text-sm font-semibold text-[var(--text-primary)]">{already ? "الطلب مشحون بالفعل" : "تم إنشاء الشحنة بنجاح"}</p>
               <p className="text-xs text-[var(--text-muted)] mt-1">
                 رقم التتبع: <span className="font-mono font-bold text-[var(--primary)]">{tracking}</span>
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-3 bg-[var(--success-light)] border border-[var(--success-border)] rounded-[var(--radius-md)] p-3">
-            <MessageSquare size={15} className="text-[var(--success)]" />
-            <p className="text-xs text-[var(--success-text)]">تم إرسال رقم التتبع للعميل على واتساب</p>
-          </div>
+          {!already && (
+            <div className="flex items-center gap-3 bg-[var(--success-light)] border border-[var(--success-border)] rounded-[var(--radius-md)] p-3">
+              <MessageSquare size={15} className="text-[var(--success)]" />
+              <p className="text-xs text-[var(--success-text)]">تم إرسال رقم التتبع للعميل على واتساب</p>
+            </div>
+          )}
         </div>
       )}
     </Modal>

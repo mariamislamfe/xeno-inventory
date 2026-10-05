@@ -354,7 +354,7 @@ const STATUS_DISPLAY: Record<string, { label: string; variant: "success" | "warn
 };
 
 // ── Order actions (same action for one order or a whole selection) ─────
-type OrderAction = "confirm" | "fulfill" | "cancel" | "delete";
+type OrderAction = "confirm" | "fulfill" | "cancel" | "delete" | "ship";
 
 const ACTION_LABELS: Record<OrderAction, { button: string; done: (n: number) => string; ask?: (n: number) => string }> = {
   confirm: { button: "تأكيد",       done: (n) => n === 1 ? "تم تأكيد الطلب ✓"   : `تم تأكيد ${n} طلب ✓` },
@@ -363,9 +363,40 @@ const ACTION_LABELS: Record<OrderAction, { button: string; done: (n: number) => 
              ask:  (n) => `سيتم إلغاء ${n} طلب على Shopify. متأكد؟` },
   delete:  { button: "حذف",         done: (n) => n === 1 ? "تم حذف الطلب"        : `تم حذف ${n} طلب`,
              ask:  (n) => `سيتم إلغاء وحذف ${n} طلب نهائياً من Shopify، ولا يمكن التراجع عن الحذف. متأكد؟` },
+  ship:    { button: "شحن",         done: (n) => n === 1 ? "تم شحن الطلب ✓"     : `تم شحن ${n} طلب ✓`,
+             ask:  (n) => `سيتم إنشاء ${n} شحنة على J&T Express وإرسال رقم التتبع لكل عميل على واتساب. الطلبات المشحونة قبل كده هتتخطى. متأكد؟` },
 };
 
-async function runOrderAction(order: XenoOrder, action: OrderAction): Promise<void> {
+// Orders that can still be sent to J&T
+function canShip(o: XenoOrder) {
+  return !o.trackingNumber && o.status !== "delivered" && o.status !== "cancelled";
+}
+
+// Returns the tracking number for "ship"
+async function runOrderAction(order: XenoOrder, action: OrderAction): Promise<string | void> {
+  if (action === "ship") {
+    const res = await fetch("/api/confirmation/ship", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({
+        orders: [{
+          shopify_order_id: order.shopifyId,
+          order_number:     order.orderNumber,
+          customer_name:    order.customerName,
+          phone:            order.customerPhone,
+          address:          order.address,
+          city:             order.city,
+          governorate:      order.governorate,
+          total:            order.total,
+        }],
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    const r = data.results?.[0];
+    if (!res.ok || !r?.ok || !r.trackingNumber) throw new Error(r?.error ?? data.error ?? "فشل إنشاء الشحنة");
+    return r.trackingNumber as string;
+  }
+
   const res = await fetch("/api/shopify/orders/status", {
     method:  "POST",
     headers: { "Content-Type": "application/json" },
@@ -481,6 +512,15 @@ export default function OrdersPage() {
   const searchTimer = useRef<ReturnType<typeof setTimeout>>(null);
   const { success, error } = useToast();
 
+  // Deleting orders is a manager-only feature (also enforced by the API)
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => r.json())
+      .then((d) => setIsAdmin(d?.user?.role === "admin"))
+      .catch(() => {});
+  }, []);
+
   const totalPages = totalCount != null ? Math.max(1, Math.ceil(totalCount / pageSize)) : null;
 
   // Count only ids still on the page (merges/deletes can remove selected orders)
@@ -515,7 +555,12 @@ export default function OrdersPage() {
   }, [orders]);
 
   // Reflect a successful action in the local list (no refetch needed)
-  function applyActionLocally(ids: Set<string>, action: OrderAction) {
+  function applyActionLocally(ids: Set<string>, action: OrderAction, tracking?: Map<string, string>) {
+    if (action === "ship") {
+      setOrders((prev) => prev.map((o) => tracking?.has(o.id)
+        ? { ...o, trackingNumber: tracking.get(o.id)!, shippingProvider: "J&T Express" } : o));
+      return;
+    }
     if (action === "delete") {
       setOrders((prev) => prev.filter((o) => !ids.has(o.id)));
       setTotalCount((c) => (c != null ? c - ids.size : null));
@@ -550,11 +595,15 @@ export default function OrdersPage() {
 
   async function runBulk(action: OrderAction) {
     setBulkConfirm(null);
-    const targets = orders.filter((o) => selectedIds.has(o.id));
-    if (targets.length === 0) return;
+    const targets = orders.filter((o) => selectedIds.has(o.id) && (action !== "ship" || canShip(o)));
+    if (targets.length === 0) {
+      if (action === "ship") error("لا يوجد طلبات للشحن", "كل الطلبات المحددة مشحونة أو مكتملة أو ملغية");
+      return;
+    }
 
     setBulkProgress({ action, done: 0, total: targets.length });
     const succeeded = new Set<string>();
+    const tracking  = new Map<string, string>();
     const failed: { order: XenoOrder; message: string }[] = [];
 
     // Small worker pool: Shopify REST allows ~2 requests/second
@@ -563,7 +612,8 @@ export default function OrdersPage() {
       while (next < targets.length) {
         const order = targets[next++];
         try {
-          await runOrderAction(order, action);
+          const tn = await runOrderAction(order, action);
+          if (tn) tracking.set(order.id, tn);
           succeeded.add(order.id);
         } catch (err) {
           failed.push({ order, message: err instanceof Error ? err.message : String(err) });
@@ -573,7 +623,7 @@ export default function OrdersPage() {
     }
     await Promise.all([worker(), worker()]);
 
-    applyActionLocally(succeeded, action);
+    applyActionLocally(succeeded, action, tracking);
     // Keep only the failed orders selected so they can be retried
     setSelectedIds(new Set(failed.map((f) => f.order.id)));
     setBulkProgress(null);
@@ -843,9 +893,14 @@ export default function OrdersPage() {
                 <Button variant="secondary" size="sm" icon={<XCircle size={13} />} onClick={() => setBulkConfirm("cancel")}>
                   {ACTION_LABELS.cancel.button}
                 </Button>
-                <Button variant="danger" size="sm" icon={<Trash2 size={13} />} onClick={() => setBulkConfirm("delete")}>
-                  {ACTION_LABELS.delete.button}
+                <Button variant="primary" size="sm" icon={<Truck size={13} />} onClick={() => setBulkConfirm("ship")}>
+                  {ACTION_LABELS.ship.button}
                 </Button>
+                {isAdmin && (
+                  <Button variant="danger" size="sm" icon={<Trash2 size={13} />} onClick={() => setBulkConfirm("delete")}>
+                    {ACTION_LABELS.delete.button}
+                  </Button>
+                )}
               </div>
               <button
                 onClick={() => setSelectedIds(new Set())}
@@ -880,14 +935,18 @@ export default function OrdersPage() {
         footer={bulkConfirm && (
           <>
             <Button variant="secondary" onClick={() => setBulkConfirm(null)}>رجوع</Button>
-            <Button variant="danger" onClick={() => runBulk(bulkConfirm)}>
+            <Button variant={bulkConfirm === "ship" ? "primary" : "danger"} onClick={() => runBulk(bulkConfirm)}>
               {ACTION_LABELS[bulkConfirm].button}
             </Button>
           </>
         )}
       >
         <p className="text-sm text-[var(--text-secondary)]">
-          {bulkConfirm && ACTION_LABELS[bulkConfirm].ask?.(selectedCount)}
+          {bulkConfirm && ACTION_LABELS[bulkConfirm].ask?.(
+            bulkConfirm === "ship"
+              ? orders.filter((o) => selectedIds.has(o.id) && canShip(o)).length
+              : selectedCount,
+          )}
         </p>
       </Modal>
 
