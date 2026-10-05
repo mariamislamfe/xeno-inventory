@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { normalizeOrder } from "@/lib/shopify/orders";
 import type { ShopifyOrderRaw, XenoOrder } from "@/lib/shopify/orders";
 import { phoneKey, toE164, toLocal } from "@/lib/phone";
+import { withShipmentTracking } from "@/lib/shipments";
 
 const SHOP    = process.env.SHOPIFY_SHOP;
 const TOKEN   = process.env.SHOPIFY_ACCESS_TOKEN;
@@ -56,7 +57,7 @@ export async function GET(req: NextRequest) {
     const nextPageInfo = nextMatch ? decodeURIComponent(nextMatch[1]) : null;
 
     const data   = (await resp.json()) as { orders: ShopifyOrderRaw[] };
-    const orders = data.orders.map(normalizeOrder);
+    const orders = await withShipmentTracking(data.orders.map(normalizeOrder));
 
     return NextResponse.json({
       orders,

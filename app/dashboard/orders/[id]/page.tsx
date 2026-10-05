@@ -2,6 +2,7 @@ import React from "react";
 import { notFound } from "next/navigation";
 import { normalizeOrder } from "@/lib/shopify/orders";
 import type { ShopifyOrderRaw } from "@/lib/shopify/orders";
+import { withShipmentTracking } from "@/lib/shipments";
 import { OrderDetailsClient } from "./OrderDetailsClient";
 
 interface OrderPageProps {
@@ -24,7 +25,7 @@ export default async function OrderPage({ params }: OrderPageProps) {
     );
     if (!resp.ok) notFound();
     const data = await resp.json() as { order: ShopifyOrderRaw };
-    order = normalizeOrder(data.order);
+    [order] = await withShipmentTracking([normalizeOrder(data.order)]);
   } catch {
     notFound();
   }
