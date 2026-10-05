@@ -1,304 +1,37 @@
+// Egyptian address tree from the J&T "Addresses with codes" sheet.
+// Data lives in jt-addresses.json — regenerate it from the sheet rather than editing by hand.
+import raw from "./jt-addresses.json";
+
+export interface EgyptArea {
+  name: string;
+  code: string; // J&T district code
+}
+
 export interface EgyptCity {
   name: string;
-  areas: string[];
+  code: string; // J&T city code
+  areas: EgyptArea[];
 }
 
 export interface EgyptProvince {
-  name: string; // Arabic name matching GOV_EN keys in route.ts
+  name: string; // Arabic name as used by J&T
+  code: string; // J&T province code
   cities: EgyptCity[];
 }
 
-export const EGYPT_DIVISIONS: EgyptProvince[] = [
-  {
-    name: "القاهرة",
-    cities: [
-      { name: "القاهرة", areas: ["وسط البلد", "باب الشعرية", "الموسكي", "الأزهر", "الجمالية", "الدرب الأحمر", "السيدة زينب", "عابدين", "قصر النيل", "بولاق"] },
-      { name: "شبرا", areas: ["شبرا مصر", "شبرا الخيمة", "خوشة قدم", "دير الملاك", "المطرية"] },
-      { name: "مصر الجديدة", areas: ["هليوبوليس", "النزهة", "مصر الجديدة", "عين شمس", "الوايلي", "المرج"] },
-      { name: "مدينة نصر", areas: ["مدينة نصر أولى", "مدينة نصر ثانية", "المقطم", "البساتين", "دار السلام"] },
-      { name: "القاهرة الجديدة", areas: ["التجمع الأول", "التجمع الخامس", "الرحاب", "مدينتي", "القطامية", "الشروق", "بدر"] },
-      { name: "المعادي", areas: ["المعادي", "دجلة", "كورنيش المعادي", "المعادي الجديدة", "طره", "حلوان"] },
-      { name: "مصر القديمة", areas: ["مصر القديمة", "فم الخليج", "المقياس", "البساتين دار السلام"] },
-      { name: "عين شمس", areas: ["عين شمس", "المرج", "مشتول السوق", "الزاوية الحمراء", "منشأة الصدر"] },
-      { name: "الزيتون", areas: ["الزيتون", "حدائق القبة", "حلمية الزيتون", "الأميرية"] },
-      { name: "منشأة ناصر", areas: ["منشأة ناصر", "زين العابدين", "الشرابية", "رودة"] },
-      { name: "الساحل", areas: ["الساحل", "روض الفرج", "شبرا", "السواح"] },
-      { name: "مدينة الرحاب", areas: ["الرحاب", "مدينة بدر", "العبور"] },
-      { name: "الشيخ زايد - القاهرة", areas: ["الحي الأول", "الحي الثاني", "الحي الثالث", "الحي الرابع"] },
-    ],
-  },
-  {
-    name: "الإسكندرية",
-    cities: [
-      { name: "الإسكندرية", areas: ["المنتزه", "سيدي جابر", "سموحة", "ستانلي", "ميامي", "العجمي", "غيط العنب"] },
-      { name: "المحطة", areas: ["محطة مصر", "الإبراهيمية", "السيوف", "وابور المياه", "العطارين"] },
-      { name: "الرمل", areas: ["رمل غرب", "رمل شرق", "سيدي بشر", "فلمنج", "جناكليس"] },
-      { name: "اللبان", areas: ["اللبان", "كرموز", "ورديان", "الدخيلة", "المكس"] },
-      { name: "العجمي", areas: ["العجمي", "الدخيلة", "كيلو 21", "برج العرب"] },
-      { name: "مرسى مطروح الكيلو", areas: ["أبو قير", "إيدكو", "منتزه"] },
-      { name: "برج العرب", areas: ["برج العرب", "مدينة برج العرب", "الهانوفيل"] },
-    ],
-  },
-  {
-    name: "الجيزة",
-    cities: [
-      { name: "الجيزة", areas: ["الهرم", "فيصل", "العمرانية", "أوسيم", "الوراق", "أبو النمرس"] },
-      { name: "الدقي", areas: ["الدقي", "المهندسين", "العجوزة", "إنبابة", "بولاق الدكرور"] },
-      { name: "مدينة السادس من أكتوبر", areas: ["الحي الأول", "الحي الثاني", "الحي الثالث", "الحي الرابع", "الحي الخامس", "الحي الرابع عشر"] },
-      { name: "الشيخ زايد", areas: ["الحي الأول", "الحي الثاني", "الحي الثالث", "الحي الرابع", "بيفرلي هيلز"] },
-      { name: "حدائق الأهرام", areas: ["حدائق الأهرام", "كرداسة", "أبو رواش"] },
-      { name: "البدرشين", areas: ["البدرشين", "الصف", "الحوامدية", "أطفيح"] },
-      { name: "أوسيم", areas: ["أوسيم", "منشأة البكاري", "كفر حكيم"] },
-    ],
-  },
-  {
-    name: "الشرقية",
-    cities: [
-      { name: "الزقازيق", areas: ["الزقازيق", "مساكن المطار", "مساكن الشباب"] },
-      { name: "العاشر من رمضان", areas: ["الحي الأول", "الحي الثاني", "الحي الثالث", "الحي الرابع", "الحي الخامس", "الحي السادس", "الحي السابع", "الحي الثامن", "الحي التاسع", "الحي العاشر"] },
-      { name: "بلبيس", areas: ["بلبيس", "الإسماعيلية الصغيرة", "ههيا"] },
-      { name: "أبو حماد", areas: ["أبو حماد", "ههيا", "القرين"] },
-      { name: "ديرب نجم", areas: ["ديرب نجم", "فاقوس", "الحسينية"] },
-      { name: "مشتول السوق", areas: ["مشتول السوق", "أبو كبير", "ميت أبو علي"] },
-      { name: "القنايات", areas: ["القنايات", "منشأة أبو عمر", "صان الحجر"] },
-      { name: "أجا", areas: ["أجا", "ميت غمر", "السنبلاوين"] },
-      { name: "كفر صقر", areas: ["كفر صقر", "منيا القمح"] },
-    ],
-  },
-  {
-    name: "الدقهلية",
-    cities: [
-      { name: "المنصورة", areas: ["المنصورة", "طلخا", "المنصورة الجديدة", "ميت سلسيل"] },
-      { name: "ميت غمر", areas: ["ميت غمر", "أشمون", "بنها"] },
-      { name: "المطرية", areas: ["المطرية", "السنبلاوين", "أجا"] },
-      { name: "دكرنس", areas: ["دكرنس", "ميت أبو غالب", "الجمالية"] },
-      { name: "بلقاس", areas: ["بلقاس", "السنانية", "منية النصر"] },
-      { name: "أجا", areas: ["أجا", "شربين", "نبروه"] },
-      { name: "شربين", areas: ["شربين", "منية سندوب", "كفر سعد"] },
-      { name: "السنبلاوين", areas: ["السنبلاوين", "ميت عفيفي", "بنى عبيد"] },
-    ],
-  },
-  {
-    name: "البحيرة",
-    cities: [
-      { name: "دمنهور", areas: ["دمنهور", "كفر الدوار", "دمنهور الجديدة"] },
-      { name: "كفر الدوار", areas: ["كفر الدوار", "الرحمانية", "وادي النطرون"] },
-      { name: "رشيد", areas: ["رشيد", "إدكو", "أبو المطامير"] },
-      { name: "شبراخيت", areas: ["شبراخيت", "كوم حمادة", "بسيون"] },
-      { name: "إيتاي البارود", areas: ["إيتاي البارود", "حوش عيسى", "أبو حمص"] },
-      { name: "أبو المطامير", areas: ["أبو المطامير", "الدلنجات", "المحمودية"] },
-      { name: "وادي النطرون", areas: ["وادي النطرون", "النوبارية", "الكريمات"] },
-    ],
-  },
-  {
-    name: "المنوفية",
-    cities: [
-      { name: "شبين الكوم", areas: ["شبين الكوم", "منوف", "أشمون"] },
-      { name: "منوف", areas: ["منوف", "تلا", "قويسنا"] },
-      { name: "أشمون", areas: ["أشمون", "الشهداء", "بركة السبع"] },
-      { name: "السادات", areas: ["مدينة السادات", "الحي الأول", "الحي الثاني", "الحي الثالث"] },
-      { name: "الشهداء", areas: ["الشهداء", "الباجور", "قويسنا"] },
-      { name: "تلا", areas: ["تلا", "سرس الليان", "الخطاطبة"] },
-    ],
-  },
-  {
-    name: "الغربية",
-    cities: [
-      { name: "طنطا", areas: ["طنطا", "بسيون", "السنطة"] },
-      { name: "كفر الزيات", areas: ["كفر الزيات", "زفتى", "المحلة الكبرى"] },
-      { name: "المحلة الكبرى", areas: ["المحلة الكبرى", "السنطة", "بسيون"] },
-      { name: "سمنود", areas: ["سمنود", "قطور", "زفتى"] },
-      { name: "بسيون", areas: ["بسيون", "أبو كبير", "قطور"] },
-    ],
-  },
-  {
-    name: "كفر الشيخ",
-    cities: [
-      { name: "كفر الشيخ", areas: ["كفر الشيخ", "دسوق", "بيلا"] },
-      { name: "دسوق", areas: ["دسوق", "برلس", "الحامول"] },
-      { name: "فوه", areas: ["فوه", "مطوبس", "سيدي سالم"] },
-      { name: "بيلا", areas: ["بيلا", "الرياض", "الحامول"] },
-      { name: "مطوبس", areas: ["مطوبس", "بلطيم", "الرياض"] },
-    ],
-  },
-  {
-    name: "الإسماعيلية",
-    cities: [
-      { name: "الإسماعيلية", areas: ["الإسماعيلية", "أبو صوير", "الشركة"] },
-      { name: "القنطرة", areas: ["القنطرة شرق", "القنطرة غرب", "التل الكبير"] },
-      { name: "فايد", areas: ["فايد", "القصاصين", "السرابيوم"] },
-      { name: "أبو صوير", areas: ["أبو صوير", "كيلو 45", "البلاح"] },
-    ],
-  },
-  {
-    name: "بورسعيد",
-    cities: [
-      { name: "بورسعيد", areas: ["حي الشرق", "حي الغرب", "حي الجنوب", "حي الضواحي", "حي المنتزه", "حي العرب", "حي الزهور"] },
-      { name: "بورفؤاد", areas: ["بورفؤاد"] },
-    ],
-  },
-  {
-    name: "السويس",
-    cities: [
-      { name: "السويس", areas: ["العرباين", "الجناين", "فيصل", "صلاح الدين", "عتاقة"] },
-      { name: "الأتاوة", areas: ["الأتاوة", "أبو سلطان"] },
-    ],
-  },
-  {
-    name: "شمال سيناء",
-    cities: [
-      { name: "العريش", areas: ["العريش", "الشيخ زويد", "رفح"] },
-      { name: "رفح", areas: ["رفح", "رفح الجديدة"] },
-      { name: "الشيخ زويد", areas: ["الشيخ زويد"] },
-      { name: "بئر العبد", areas: ["بئر العبد", "نخل"] },
-    ],
-  },
-  {
-    name: "جنوب سيناء",
-    cities: [
-      { name: "شرم الشيخ", areas: ["نعمة باي", "هضبة أم السيد", "شرم القبلة", "رأس نصراني", "الحديقة"] },
-      { name: "دهب", areas: ["دهب", "أسيلة", "مسبك"] },
-      { name: "نويبع", areas: ["نويبع", "طابا"] },
-      { name: "طابا", areas: ["طابا"] },
-      { name: "مرسى علم", areas: ["مرسى علم", "القصير"] },
-      { name: "أبو رديس", areas: ["أبو رديس", "أبو زنيمة", "السانت كاترين"] },
-      { name: "الطور", areas: ["الطور"] },
-    ],
-  },
-  {
-    name: "الفيوم",
-    cities: [
-      { name: "الفيوم", areas: ["الفيوم", "سنورس", "طامية"] },
-      { name: "يوسف الصديق", areas: ["يوسف الصديق", "إيطسا", "أبشواي"] },
-      { name: "طامية", areas: ["طامية", "إيطسا", "الحادقة"] },
-      { name: "سنورس", areas: ["سنورس", "الشواشنة"] },
-    ],
-  },
-  {
-    name: "بني سويف",
-    cities: [
-      { name: "بني سويف", areas: ["بني سويف", "الفشن", "ناصر"] },
-      { name: "الفشن", areas: ["الفشن", "بياض العرب", "سمسطا"] },
-      { name: "إهناسيا", areas: ["إهناسيا", "الواسطى", "نزلة العمدة"] },
-      { name: "ببا", areas: ["ببا", "أهناسيا الجديدة"] },
-      { name: "سمسطا", areas: ["سمسطا", "العدوة"] },
-    ],
-  },
-  {
-    name: "المنيا",
-    cities: [
-      { name: "المنيا", areas: ["المنيا", "الفلاح", "مطاهر"] },
-      { name: "سمالوط", areas: ["سمالوط", "دير مواس"] },
-      { name: "المنيا الجديدة", areas: ["المنيا الجديدة"] },
-      { name: "ملوي", areas: ["ملوي", "دير أبو حنس"] },
-      { name: "أبو قرقاص", areas: ["أبو قرقاص", "بني مزار"] },
-      { name: "بني مزار", areas: ["بني مزار", "العدوة", "مطاي"] },
-      { name: "العدوة", areas: ["العدوة", "مغاغة"] },
-      { name: "مغاغة", areas: ["مغاغة", "الروضة"] },
-    ],
-  },
-  {
-    name: "أسيوط",
-    cities: [
-      { name: "أسيوط", areas: ["أسيوط", "دير مواس", "القوصية"] },
-      { name: "أسيوط الجديدة", areas: ["أسيوط الجديدة", "منفلوط"] },
-      { name: "منفلوط", areas: ["منفلوط", "القوصية"] },
-      { name: "أبنوب", areas: ["أبنوب", "أبو تيج"] },
-      { name: "ساحل سليم", areas: ["ساحل سليم", "الغنايم"] },
-      { name: "البداري", areas: ["البداري", "القوصية"] },
-      { name: "صدفا", areas: ["صدفا"] },
-    ],
-  },
-  {
-    name: "سوهاج",
-    cities: [
-      { name: "سوهاج", areas: ["سوهاج", "طهطا", "الكوثر"] },
-      { name: "أخميم", areas: ["أخميم", "ساقلتة"] },
-      { name: "البلينا", areas: ["البلينا", "جهينة"] },
-      { name: "المراغة", areas: ["المراغة", "دار السلام"] },
-      { name: "طهطا", areas: ["طهطا", "تما"] },
-      { name: "جرجا", areas: ["جرجا", "العسيرات"] },
-      { name: "دار السلام", areas: ["دار السلام", "طما"] },
-    ],
-  },
-  {
-    name: "قنا",
-    cities: [
-      { name: "قنا", areas: ["قنا", "قوص", "الوقف"] },
-      { name: "نجع حمادي", areas: ["نجع حمادي", "الفرشوط", "أبو تشت"] },
-      { name: "قوص", areas: ["قوص", "دشنا"] },
-      { name: "دشنا", areas: ["دشنا", "الوقف"] },
-      { name: "أبو تشت", areas: ["أبو تشت", "فرقص"] },
-    ],
-  },
-  {
-    name: "الأقصر",
-    cities: [
-      { name: "الأقصر", areas: ["الأقصر", "البياضية", "الزينية", "طيبة"] },
-      { name: "إسنا", areas: ["إسنا", "الكامل", "مدامود"] },
-      { name: "أرمنت", areas: ["أرمنت", "الطود"] },
-      { name: "القرنة", areas: ["القرنة", "الدير البحري"] },
-    ],
-  },
-  {
-    name: "أسوان",
-    cities: [
-      { name: "أسوان", areas: ["أسوان", "شلال", "كوم أمبو"] },
-      { name: "كوم أمبو", areas: ["كوم أمبو", "دراو"] },
-      { name: "أبو سمبل", areas: ["أبو سمبل"] },
-      { name: "دراو", areas: ["دراو", "نصر النوبة"] },
-      { name: "إدفو", areas: ["إدفو", "مرير"] },
-    ],
-  },
-  {
-    name: "البحر الأحمر",
-    cities: [
-      { name: "الغردقة", areas: ["الغردقة", "سهل حشيش", "الأهياء"] },
-      { name: "مرسى علم", areas: ["مرسى علم", "الفور", "ضهر"] },
-      { name: "القصير", areas: ["القصير"] },
-      { name: "رأس غارب", areas: ["رأس غارب", "ضهر"] },
-    ],
-  },
-  {
-    name: "الوادي الجديد",
-    cities: [
-      { name: "الخارجة", areas: ["الخارجة", "الداخلة", "الفرافرة"] },
-      { name: "الداخلة", areas: ["الداخلة", "موط"] },
-      { name: "الفرافرة", areas: ["الفرافرة", "قصر الفرافرة"] },
-      { name: "بلاط", areas: ["بلاط", "الشيخ وادي"] },
-    ],
-  },
-  {
-    name: "مطروح",
-    cities: [
-      { name: "مرسى مطروح", areas: ["مرسى مطروح", "العلمين", "الضبعة"] },
-      { name: "سيوة", areas: ["سيوة"] },
-      { name: "الحمام", areas: ["الحمام", "العلمين", "الضبعة"] },
-      { name: "الضبعة", areas: ["الضبعة"] },
-    ],
-  },
-  {
-    name: "دمياط",
-    cities: [
-      { name: "دمياط", areas: ["دمياط", "فارسكور", "الزرقا"] },
-      { name: "رأس البر", areas: ["رأس البر"] },
-      { name: "كفر البطيخ", areas: ["كفر البطيخ"] },
-      { name: "الزرقا", areas: ["الزرقا", "فارسكور"] },
-      { name: "دمياط الجديدة", areas: ["دمياط الجديدة", "المنزلة"] },
-    ],
-  },
-  {
-    name: "القليوبية",
-    cities: [
-      { name: "بنها", areas: ["بنها", "طوخ", "قليوب"] },
-      { name: "قليوب", areas: ["قليوب", "خانكة", "القناطر"] },
-      { name: "العبور", areas: ["مدينة العبور", "الحي الأول", "الحي الثاني"] },
-      { name: "شبرا الخيمة", areas: ["شبرا الخيمة", "القليوبية", "الخانكة"] },
-      { name: "طوخ", areas: ["طوخ", "القناطر الخيرية"] },
-      { name: "كفر شكر", areas: ["كفر شكر", "تلا"] },
-    ],
-  },
-];
+type RawData = [string, string, [string, string, [string, string][]][]][];
+
+export const EGYPT_DIVISIONS: EgyptProvince[] = (raw as RawData).map(([name, code, cities]) => ({
+  name,
+  code,
+  cities: cities.map(([cName, cCode, areas]) => ({
+    name: cName,
+    code: cCode,
+    areas: areas.map(([aName, aCode]) => ({ name: aName, code: aCode })),
+  })),
+}));
+
+export const EG_PROVINCES = EGYPT_DIVISIONS.map((p) => p.name);
 
 /** Fast lookup: province name → list of city names */
 export function getCities(provinceName: string): string[] {
@@ -309,9 +42,106 @@ export function getCities(provinceName: string): string[] {
 /** Fast lookup: province + city → list of area names */
 export function getAreas(provinceName: string, cityName: string): string[] {
   const prov = EGYPT_DIVISIONS.find((p) => p.name === provinceName);
-  if (!prov) return [];
-  const city = prov.cities.find((c) => c.name === cityName);
-  return city ? city.areas : [];
+  const city = prov?.cities.find((c) => c.name === cityName);
+  return city ? city.areas.map((a) => a.name) : [];
 }
 
-export const EG_PROVINCES = EGYPT_DIVISIONS.map((p) => p.name);
+// ── Search ─────────────────────────────────────────────────────────────
+
+/** Normalize Arabic for matching: unify alef/yeh/teh-marbuta, strip tashkeel and tatweel. */
+export function normalizeArabic(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[ً-ْٰـ]/g, "")
+    .replace(/[أإآٱ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه")
+    .replace(/ؤ/g, "و")
+    .replace(/ئ/g, "ي")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// "الزقازيق" should match "زقازيق" — the definite article is optional when typing
+const stripAl = (w: string) => (w.startsWith("ال") && w.length > 3 ? w.slice(2) : w);
+
+function editDistance(a: string, b: string): number {
+  const prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let diag = prev[0];
+    prev[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = prev[j];
+      prev[j] = Math.min(prev[j] + 1, prev[j - 1] + 1, diag + (a[i - 1] === b[j - 1] ? 0 : 1));
+      diag = tmp;
+    }
+  }
+  return prev[b.length];
+}
+
+/** Direct match — lower is better, -1 = none: 0 name starts with query · 1 a word does · 2 contains it */
+export function matchScore(name: string, q: string): number {
+  if (!q) return 0;
+  if (name.startsWith(q) || stripAl(name).startsWith(q)) return 0;
+  if (name.split(" ").some((w) => w.startsWith(q) || stripAl(w).startsWith(q))) return 1;
+  if (name.includes(q)) return 2;
+  return -1;
+}
+
+/** Typo distance between the query and the closest word beginning (Infinity if hopeless). */
+function typoDistance(name: string, q: string): number {
+  let best = Infinity;
+  for (const w of name.split(" ")) {
+    for (const cand of [w, stripAl(w)]) {
+      // Compare against the same-length prefix, ±1 letter for a missing/extra one
+      for (const len of [q.length - 1, q.length, q.length + 1]) {
+        if (len <= 0 || len > cand.length + 1) continue;
+        best = Math.min(best, editDistance(q, cand.slice(0, len)));
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * Filter + sort searchable items, closest matches first.
+ * Falls back to typo-tolerant matching only when nothing contains the query.
+ */
+export function rankByQuery<T extends { norm: string }>(items: T[], query: string, limit = 60): T[] {
+  const q = normalizeArabic(query);
+  if (!q) return items.slice(0, limit);
+
+  const byScore = (a: { item: T; score: number }, b: { item: T; score: number }) =>
+    a.score - b.score || a.item.norm.length - b.item.norm.length;
+
+  const hits: { item: T; score: number }[] = [];
+  for (const item of items) {
+    const score = matchScore(item.norm, q);
+    if (score >= 0) hits.push({ item, score });
+  }
+  if (hits.length > 0) return hits.sort(byScore).slice(0, limit).map((h) => h.item);
+
+  // Typos only make sense once a few letters are typed
+  const allowed = q.length < 3 ? 0 : q.length < 6 ? 1 : 2;
+  if (allowed === 0) return [];
+  const near: { item: T; score: number }[] = [];
+  for (const item of items) {
+    const d = typoDistance(item.norm, q);
+    if (d <= allowed) near.push({ item, score: d });
+  }
+  return near.sort(byScore).slice(0, limit).map((h) => h.item);
+}
+
+// Flat, pre-normalized lists so city/area fields can search across all governorates
+export interface CityEntry { province: string; city: string; norm: string }
+export interface AreaEntry { province: string; city: string; area: string; norm: string }
+
+export const PROVINCE_ENTRIES = EGYPT_DIVISIONS.map((p) => ({ province: p.name, norm: normalizeArabic(p.name) }));
+
+export const CITY_ENTRIES: CityEntry[] = EGYPT_DIVISIONS.flatMap((p) =>
+  p.cities.map((c) => ({ province: p.name, city: c.name, norm: normalizeArabic(c.name) }))
+);
+
+export const AREA_ENTRIES: AreaEntry[] = EGYPT_DIVISIONS.flatMap((p) =>
+  p.cities.flatMap((c) => c.areas.map((a) => ({ province: p.name, city: c.name, area: a.name, norm: normalizeArabic(a.name) })))
+);

@@ -1,4 +1,6 @@
 import crypto from "crypto";
+import { toLocal } from "@/lib/phone";
+import { resolveJTAddress } from "@/lib/jt/address";
 
 // ── J&T Express Egypt API Client ─────────────────────────────────────────────
 const BASE_URL      = (process.env.JT_BASE_URL      ?? "").trim();
@@ -34,7 +36,7 @@ function bizDigest(): string {
 
 // ── Generic J&T POST ──────────────────────────────────────────────────────────
 
-async function jtPost(path: string, bizParams: Record<string, unknown>, timeoutMs = 15_000) {
+export async function jtPost(path: string, bizParams: Record<string, unknown>, timeoutMs = 15_000) {
   if (!API_ACCOUNT)   throw new Error("JT_API_ACCOUNT env var is missing");
   if (!CUSTOMER_CODE) throw new Error("JT_CUSTOMER_CODE env var is missing");
   if (!BASE_URL)      throw new Error("JT_BASE_URL env var is missing");
@@ -68,6 +70,24 @@ async function jtPost(path: string, bizParams: Record<string, unknown>, timeoutM
 
 // ── Create Order ──────────────────────────────────────────────────────────────
 
+// Common addOrder error codes (J&T API docs) → Arabic explanation
+const JT_ERRORS: Record<string, string> = {
+  "145003030": "توقيع الـ headers غلط — راجع JT_API_ACCOUNT و JT_PRIVATE_KEY",
+  "145003031": "توقيع الـ bizContent غلط — راجع JT_CUSTOMER_CODE و JT_PASSWORD",
+  "145003060": "المنطقة مش موجودة عند J&T",
+  "145003061": "المدينة مش موجودة عند J&T",
+  "145003062": "المحافظة مش موجودة عند J&T",
+  "145003083": "بيانات الراسل ناقصة",
+  "145003084": "بيانات المستلم ناقصة",
+  "145003085": "رقم الموبايل فاضي",
+  "145003092": "الوزن غير صالح",
+  "145003101": "رقم الطلب ده اتبعت لـ J&T قبل كده",
+  "145002001": "الطلب ده اتبعت لـ J&T قبل كده",
+  "145003111": "عدد الطرود غير صالح (لازم 1)",
+  "145003112": "خدمة التحصيل (COD) مش مفعلة على الحساب",
+  "145003113": "طريقة الدفع (payType) مش متوافقة مع الحساب",
+};
+
 export interface JTOrderInput {
   orderNumber:  string;
   customerName: string;
@@ -89,79 +109,109 @@ export interface JTOrderResult {
   raw?:            unknown;
 }
 
-export async function createJTOrder(order: JTOrderInput): Promise<JTOrderResult> {
+/**
+ * Build the addOrder bizContent per the J&T Egypt spec.
+ * Notes from J&T support: FOD (fodMoney) is NOT enabled on our account — the amount to
+ * collect goes in itemsValue — and totalQuantity must be the number 1.
+ */
+export function buildAddOrderBiz(order: JTOrderInput): { ok: true; biz: Record<string, unknown>; areaGuessed: boolean } | { ok: false; error: string } {
   // Shopify order names include "#" prefix (e.g. "#1001") — strip it for J&T
   const txlogisticId = (order.orderNumber ?? "").replace(/^#/, "").trim();
   if (!txlogisticId) {
     return { ok: false, error: `رقم الطلب فارغ أو غير صالح: "${order.orderNumber}"` };
   }
 
-  const goodsName  = order.items.map(i => `${i.name} x${i.qty}`).join(", ").slice(0, 100) || "منتجات";
-  const totalQty   = order.items.reduce((s, i) => s + i.qty, 0) || 1;
-  const phone      = order.phone.replace(/[^0-9]/g, "").replace(/^20/, "0");
+  // Phones: 11-digit local format (spec: String(11))
+  const receiverPhone = toLocal(order.phone);
+  if (receiverPhone.length !== 11) {
+    return { ok: false, error: `رقم موبايل العميل غير صالح: "${order.phone}" — لازم 11 رقم` };
+  }
+  const senderPhone = toLocal(process.env.XENO_SENDER_PHONE);
+  if (senderPhone.length !== 11) {
+    return { ok: false, error: "XENO_SENDER_PHONE غير مضبوط أو مش 11 رقم" };
+  }
 
-  const bizParams = {
-    // ── Auth ──────────────────────────────────────────────────────────
+  // prov/city/area must match J&T's address table exactly
+  const receiverAddr = resolveJTAddress({ governorate: order.governorate, city: order.city, address: order.address });
+  if (!receiverAddr.ok) return { ok: false, error: receiverAddr.error };
+
+  const senderStreet = process.env.XENO_ADDRESS ?? "";
+  const senderAddr = resolveJTAddress({
+    governorate: process.env.XENO_PROVINCE ?? "",
+    city:        process.env.XENO_CITY     ?? "",
+    address:     [process.env.XENO_AREA ?? "", senderStreet].join("، "),
+  });
+  if (!senderAddr.ok) return { ok: false, error: `عنوان الراسل (XENO_PROVINCE / XENO_CITY / XENO_AREA): ${senderAddr.error}` };
+
+  const goodsType = process.env.JT_GOODS_TYPE ?? "ITN16"; // ITN16 = Others
+  const amount    = String(Math.max(0, Math.round(order.totalAmount * 100) / 100));
+  const itemsText = order.items.map((i) => `${i.name} *${i.qty}`).join("; ") || "منتجات";
+  const street    = (order.address || receiverAddr.area).slice(0, 200);
+
+  const biz = {
+    // ── Auth ──
     customerCode: CUSTOMER_CODE,
-    digest:       bizDigest(),          // bizContent signature (field name per spec)
+    digest:       bizDigest(),
 
-    // ── Order identity ────────────────────────────────────────────────
-    txlogisticId,                       // customer order number (required)
-    operateType:  1,                    // 1=add, 2=modify
+    // ── Order identity / service ──
+    txlogisticId,
+    operateType:  1,                                     // 1 = add
+    serviceType:  process.env.JT_SERVICE_TYPE ?? "02",   // 01 or 02 (validated by J&T, error 145003200)
+    expressType:  "EZ",                                  // only "EZ" supported
+    deliveryType: "04",                                  // home delivery
+    payType:      process.env.JT_PAY_TYPE ?? "PP_PM",    // PP_PM = monthly settlement
 
-    // ── Service type ─────────────────────────────────────────────────
-    serviceType:  process.env.JT_SERVICE_TYPE ?? "02",  // 01 or 02 (required)
-    orderType:    "2",
-    expressType:  "EZ",                 // only "EZ" supported for Egypt standard
-    deliveryType: "04",                 // 04=home delivery (required)
+    // ── Parcel ──
+    goodsType,
+    weight:        String(order.weightKg ?? 0.5),        // kg, 0.01–30
+    totalQuantity: 1,                                    // must be 1 (int)
+    itemsValue:    amount,                               // amount to collect from the customer
+    priceCurrency: "EGP",
+    remark:        `XENO #${txlogisticId}`,
+    pickInfo:      itemsText.slice(0, 500),
 
-    // ── Payment ───────────────────────────────────────────────────────
-    payType:      process.env.JT_PAY_TYPE ?? "PP_PM",   // PP_PM=monthly, PP_CASH=cash on post
-    fodMoney:     String(order.totalAmount),             // COD collection amount
-
-    // ── Parcel info ───────────────────────────────────────────────────
-    goodsType:     process.env.JT_GOODS_TYPE ?? "ITN16", // ITN16=Others
-    weight:        String(order.weightKg ?? 0.5),
-    totalQuantity: "1",                                   // must be string "1" per spec
-
-    remark: `XENO #${txlogisticId}`.slice(0, 200),
-
-    // ── Sender ────────────────────────────────────────────────────────
     sender: {
-      name:        process.env.XENO_SENDER_NAME  ?? "XENO",
-      mobile:      process.env.XENO_SENDER_PHONE ?? "",
-      phone:       process.env.XENO_SENDER_PHONE ?? "",
+      name:        (process.env.XENO_SENDER_NAME ?? "XENO").slice(0, 50),
+      mobile:      senderPhone,
+      phone:       senderPhone,
       countryCode: "EGY",
-      prov:        process.env.XENO_PROVINCE ?? "Cairo",
-      city:        process.env.XENO_CITY     ?? "Cairo",
-      area:        process.env.XENO_AREA     ?? process.env.XENO_CITY ?? "Cairo",
-      address:     process.env.XENO_ADDRESS  ?? "",
-      street:      process.env.XENO_ADDRESS  ?? "",
+      prov:        senderAddr.prov,
+      city:        senderAddr.city,
+      area:        senderAddr.area,
+      street:      (senderStreet || senderAddr.area).slice(0, 200),
+      address:     (senderStreet || senderAddr.area).slice(0, 200),
     },
 
-    // ── Receiver ──────────────────────────────────────────────────────
     receiver: {
-      name:        order.customerName,
-      mobile:      phone,
-      phone:       phone,
+      name:        (order.customerName || "عميل").slice(0, 50),
+      mobile:      receiverPhone,
+      phone:       receiverPhone,
       countryCode: "EGY",
-      prov:        order.governorate || order.city || "Cairo",
-      city:        order.city        || "Cairo",
-      area:        order.city        || "Cairo",
-      address:     order.address     || order.city || "",
-      street:      order.address     || order.city || "",
+      prov:        receiverAddr.prov,
+      city:        receiverAddr.city,
+      area:        receiverAddr.area,
+      street,
+      address:     street,
     },
 
-    // ── Items ─────────────────────────────────────────────────────────
     items: [{
-      itemName:    goodsName,
-      englishName: goodsName,
-      itemType:    process.env.JT_GOODS_TYPE ?? "ITN16",
-      number:      totalQty,
-      itemValue:   String(order.totalAmount),
+      itemType:      goodsType,
+      itemName:      itemsText.slice(0, 30),
+      englishName:   itemsText.slice(0, 60),
+      number:        1,                                  // spec: ≤ 1
+      itemValue:     amount,
       priceCurrency: "EGP",
+      desc:          itemsText.slice(0, 100),
     }],
   };
+
+  return { ok: true, biz, areaGuessed: receiverAddr.areaGuessed };
+}
+
+export async function createJTOrder(order: JTOrderInput): Promise<JTOrderResult> {
+  const built = buildAddOrderBiz(order);
+  if (!built.ok) return { ok: false, error: built.error };
+  const bizParams = built.biz;
 
   try {
     const data = await jtPost("/api/order/addOrder", bizParams);
@@ -176,7 +226,9 @@ export async function createJTOrder(order: JTOrderInput): Promise<JTOrderResult>
       };
     }
     console.error("[J&T] addOrder failed:", JSON.stringify(data));
-    return { ok: false, error: data?.msg ?? data?.message ?? JSON.stringify(data), raw: data };
+    const code = String(data?.code ?? "");
+    const msg  = data?.msg ?? data?.message ?? JSON.stringify(data);
+    return { ok: false, error: JT_ERRORS[code] ? `${JT_ERRORS[code]} (${code}: ${msg})` : `${msg} (${code})`, raw: data };
   } catch (err) {
     return { ok: false, error: String(err) };
   }

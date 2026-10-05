@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { supabaseAdmin } from "@/lib/supabase/client";
 
 const SHOP    = process.env.SHOPIFY_SHOP!;
 const TOKEN   = process.env.SHOPIFY_ACCESS_TOKEN!;
@@ -8,10 +9,20 @@ function h() {
   return { "X-Shopify-Access-Token": TOKEN, "Content-Type": "application/json" };
 }
 
+// fetch with retry on Shopify's REST rate limit (bulk actions send bursts)
+async function sfetch(url: string, init?: RequestInit, attempts = 4): Promise<Response> {
+  for (let i = 1; ; i++) {
+    const resp = await fetch(url, init);
+    if (resp.status !== 429 || i >= attempts) return resp;
+    const wait = Number(resp.headers.get("Retry-After")) || 1;
+    await new Promise((r) => setTimeout(r, wait * 1000));
+  }
+}
+
 // Fulfill all line items on an order using the FulfillmentOrder API
 async function fulfillOrder(shopifyId: number): Promise<{ ok: boolean; error?: string }> {
   // Step 1: get fulfillment orders
-  const foResp = await fetch(
+  const foResp = await sfetch(
     `https://${SHOP}/admin/api/${VERSION}/orders/${shopifyId}/fulfillment_orders.json`,
     { headers: h() }
   );
@@ -25,7 +36,7 @@ async function fulfillOrder(shopifyId: number): Promise<{ ok: boolean; error?: s
 
   // Step 2: fulfill each pending fulfillment order
   for (const fo of pending) {
-    const resp = await fetch(
+    const resp = await sfetch(
       `https://${SHOP}/admin/api/${VERSION}/fulfillments.json`,
       {
         method:  "POST",
@@ -48,7 +59,7 @@ async function fulfillOrder(shopifyId: number): Promise<{ ok: boolean; error?: s
 
 // Cancel an order
 async function cancelOrder(shopifyId: number): Promise<{ ok: boolean; error?: string }> {
-  const resp = await fetch(
+  const resp = await sfetch(
     `https://${SHOP}/admin/api/${VERSION}/orders/${shopifyId}/cancel.json`,
     { method: "POST", headers: h(), body: JSON.stringify({}) }
   );
@@ -59,8 +70,53 @@ async function cancelOrder(shopifyId: number): Promise<{ ok: boolean; error?: st
   return { ok: true };
 }
 
+// Mark an order confirmed: add the "confirmed" tag (drops conflicting status tags) and record the op
+async function confirmOrder(shopifyId: number): Promise<{ ok: boolean; error?: string }> {
+  const orderUrl = `https://${SHOP}/admin/api/${VERSION}/orders/${shopifyId}.json`;
+  const getResp = await sfetch(orderUrl, { headers: h(), cache: "no-store" });
+  if (!getResp.ok) return { ok: false, error: `order fetch failed: ${getResp.status}` };
+
+  const { order } = await getResp.json() as {
+    order: { name: string; tags: string; total_price: string; phone?: string | null; customer?: { first_name?: string; last_name?: string; phone?: string | null } | null };
+  };
+  const drop = new Set(["cancelled", "postponed", "ملغي"]);
+  const tags = order.tags.split(",").map((t) => t.trim()).filter((t) => t && !drop.has(t.toLowerCase()));
+  if (!tags.includes("confirmed")) tags.push("confirmed");
+
+  const putResp = await sfetch(orderUrl, {
+    method:  "PUT",
+    headers: h(),
+    body:    JSON.stringify({ order: { id: shopifyId, tags: tags.join(",") } }),
+  });
+  if (!putResp.ok) return { ok: false, error: await putResp.text() };
+
+  // Best-effort: the ops table may not exist yet
+  await supabaseAdmin.from("xeno_ops").upsert({
+    shopify_order_id: shopifyId,
+    order_number:     order.name,
+    customer_name:    [order.customer?.first_name, order.customer?.last_name].filter(Boolean).join(" ") || null,
+    phone:            order.phone ?? order.customer?.phone ?? null,
+    total:            Number(order.total_price),
+    op_status:        "confirmed",
+    updated_at:       new Date().toISOString(),
+  }, { onConflict: "shopify_order_id" });
+
+  return { ok: true };
+}
+
+// Delete an order. Shopify only deletes cancelled orders, so cancel first.
+async function deleteOrder(shopifyId: number): Promise<{ ok: boolean; error?: string }> {
+  await cancelOrder(shopifyId); // fails harmlessly if it's already cancelled
+  const resp = await sfetch(
+    `https://${SHOP}/admin/api/${VERSION}/orders/${shopifyId}.json`,
+    { method: "DELETE", headers: h() }
+  );
+  if (!resp.ok) return { ok: false, error: await resp.text() };
+  return { ok: true };
+}
+
 // POST /api/shopify/orders/status
-// Body: { shopifyId: number, action: "fulfill" | "cancel" }
+// Body: { shopifyId: number, action: "fulfill" | "cancel" | "confirm" | "delete" }
 export async function POST(req: NextRequest) {
   try {
     const { shopifyId, action } = await req.json();
@@ -73,6 +129,10 @@ export async function POST(req: NextRequest) {
       result = await fulfillOrder(Number(shopifyId));
     } else if (action === "cancel") {
       result = await cancelOrder(Number(shopifyId));
+    } else if (action === "confirm") {
+      result = await confirmOrder(Number(shopifyId));
+    } else if (action === "delete") {
+      result = await deleteOrder(Number(shopifyId));
     } else {
       return NextResponse.json({ error: "invalid action" }, { status: 400 });
     }
