@@ -233,6 +233,25 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
         var fromBox = { top: aboveFrom.bottom + 1, bottom: y1 - 1 };
         var inL = leftB.right + 1, inR = rightB.left - 1, mid = (inL + inR) / 2;
 
+        // Sorting code row (between the amount row and the receiver): centre it
+        if (aboveTo && aboveTo.top - y0 > 6 * S) {
+          var sT = y0 + 1, sB = aboveTo.top - 1, iL = -1, iR = -1;
+          for (var sx2 = inL + 2; sx2 < inR - 2; sx2++) {
+            for (var sy2 = sT; sy2 < sB; sy2 += 2) {
+              if (lum(sx2, sy2) < 170) { if (iL < 0) iL = sx2; iR = sx2; break; }
+            }
+          }
+          if (iL >= 0 && iR - iL > 10 * S) {
+            var cw = iR - iL + 3, chh = sB - sT;
+            var code = document.createElement("canvas");
+            code.width = cw; code.height = chh;
+            code.getContext("2d").drawImage(canvas, iL - 1, sT, cw, chh, 0, 0, cw, chh);
+            ctx.fillStyle = "#fff";
+            ctx.fillRect(inL, sT, inR - inL, chh);
+            ctx.drawImage(code, Math.round(mid - cw / 2), sT);
+          }
+        }
+
         // Receiver lines → segments of nearby text items → re-placed centred
         var toItems = text.items.filter(function (t) {
           var b = basePx(t);
