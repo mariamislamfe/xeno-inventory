@@ -470,7 +470,7 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
     sheet.appendChild(img);
     document.body.appendChild(sheet);
 
-    // Relabel J&T's English fields: "Cods" → "المبلغ", amount → "900 L.E", and the
+    // Relabel J&T's English fields: drop "Cods", amount → "900 L.E" centred, and the
     // always-empty "FOD" (not enabled on our account) → "COD"
     function coverItem(t) {
       var c = document.createElement("div");
@@ -501,12 +501,31 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
         if (!amount && t !== cods && /^\\d+(\\.\\d+)?$/.test((t.str || "").trim()) &&
             Math.abs(t.transform[5] - cods.transform[5]) < 3 && t.transform[4] > cods.transform[4]) amount = t;
       });
-      coverItem(cods);
-      writeAt(cods, "المبلغ", false);
+      coverItem(cods);   // no label — just the amount, centred in its cell
       if (amount) {
         coverItem(amount);
         var n = parseFloat(amount.str);
-        writeAt(amount, (n % 1 ? n.toFixed(2) : String(n)) + " L.E", true);
+        // cell edges = the nearest vertical lines on that row
+        var rc = canvas.getContext("2d", { willReadFrequently: true });
+        var ry2 = Math.round((H - cods.transform[5] - cods.height * 0.4) * SCALE);
+        var row = rc.getImageData(0, ry2, canvas.width, 1).data;
+        function darkAt(x) { var i = x * 4; return (row[i] * 299 + row[i + 1] * 587 + row[i + 2] * 114) / 1000 < 128; }
+        var cl = Math.round(cods.transform[4] * SCALE) - 2, cr = Math.round((amount.transform[4] + amount.width) * SCALE) + 2;
+        while (cl > 0 && !darkAt(cl)) cl--;
+        while (cr < canvas.width - 1 && !darkAt(cr)) cr++;
+        var d2 = document.createElement("div");
+        d2.style.position = "absolute";
+        d2.style.left = (cl / SCALE) + "pt";
+        d2.style.width = ((cr - cl) / SCALE) + "pt";
+        d2.style.top = (H - amount.transform[5] - amount.height * 1.05) + "pt";
+        d2.style.fontSize = (amount.height * 1.25) + "pt";
+        d2.style.lineHeight = "1";
+        d2.style.textAlign = "center";
+        d2.style.whiteSpace = "nowrap";
+        d2.style.fontWeight = "700";
+        d2.style.color = "#000";
+        d2.textContent = (n % 1 ? n.toFixed(2) : String(n)) + " L.E";
+        sheet.appendChild(d2);
       }
     }
     if (fod) { coverItem(fod); writeAt(fod, "COD", false); }
