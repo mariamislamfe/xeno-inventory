@@ -2,6 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/client";
 import { printJTOrder } from "@/lib/jt/client";
 import { getLabelItems } from "@/lib/label-items";
+import { toLocal } from "@/lib/phone";
+
+// Printed as the one-line sender on the waybill
+function senderInfo() {
+  return {
+    name:  process.env.XENO_SENDER_NAME ?? "XENO",
+    phone: toLocal(process.env.XENO_SENDER_PHONE ?? ""),
+    city:  process.env.XENO_CITY ?? "",
+  };
+}
 
 // POST /api/print/label  { shopify_order_id, preview? }
 // Fetches the waybill from J&T (which marks it "Printed" there) and marks it printed here.
@@ -28,7 +38,7 @@ export async function POST(req: NextRequest) {
     getLabelItems(Number(shopify_order_id)),
   ]);
   if (!res.ok) return NextResponse.json({ error: res.error }, { status: 422 });
-  if (preview) return NextResponse.json({ ok: true, pdfBase64: res.pdfBase64, url: res.url, items });
+  if (preview) return NextResponse.json({ ok: true, pdfBase64: res.pdfBase64, url: res.url, items, sender: senderInfo() });
 
   await supabaseAdmin
     .from("shipments")
@@ -43,5 +53,5 @@ export async function POST(req: NextRequest) {
     metadata:  { order_number: ship.order_number, tracking_number: ship.tracking_number },
   });
 
-  return NextResponse.json({ ok: true, pdfBase64: res.pdfBase64, url: res.url, items });
+  return NextResponse.json({ ok: true, pdfBase64: res.pdfBase64, url: res.url, items, sender: senderInfo() });
 }
