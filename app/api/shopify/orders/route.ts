@@ -3,6 +3,7 @@ import { normalizeOrder } from "@/lib/shopify/orders";
 import type { ShopifyOrderRaw, XenoOrder } from "@/lib/shopify/orders";
 import { phoneKey, toE164, toLocal } from "@/lib/phone";
 import { withShipmentTracking } from "@/lib/shipments";
+import { GOV_EN } from "@/lib/shopify/provinces";
 
 const SHOP    = process.env.SHOPIFY_SHOP;
 const TOKEN   = process.env.SHOPIFY_ACCESS_TOKEN;
@@ -69,39 +70,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }
 }
-
-// Exact names as Shopify stores Egypt provinces (ISO + Shopify verified)
-const GOV_EN: Record<string, string> = {
-  "القاهرة":       "Cairo",
-  "الإسكندرية":    "Alexandria",
-  "الجيزة":        "Giza",
-  "الشرقية":       "Al Sharqia",
-  "الدقهلية":      "Dakahlia",
-  "البحيرة":       "Beheira",
-  "المنوفية":      "Monufia",
-  "الغربية":       "Gharbia",
-  "كفر الشيخ":     "Kafr el-Sheikh",
-  "الإسماعيلية":   "Ismailia",
-  "بورسعيد":       "Port Said",
-  "بور سعيد":      "Port Said",
-  "السويس":        "Suez",
-  "شمال سيناء":    "North Sinai",
-  "جنوب سيناء":    "South Sinai",
-  "الفيوم":        "Faiyum",
-  "بني سويف":      "Beni Suef",
-  "المنيا":        "Minya",
-  "أسيوط":         "Asyut",
-  "سوهاج":         "Sohag",
-  "قنا":            "Qena",
-  "الأقصر":        "Luxor",
-  "أسوان":         "Aswan",
-  "البحر الأحمر":  "Red Sea",
-  "الوادي الجديد": "New Valley",
-  "مطروح":         "Matrouh",
-  "مرسى مطروح":    "Matrouh",
-  "دمياط":         "Damietta",
-  "القليوبية":     "Qalyubia",
-};
 
 async function resolveCustomerId(shop: string, token: string, version: string, firstName: string, lastName: string, rawPhone: string): Promise<number | null> {
   const e164 = toE164(rawPhone);

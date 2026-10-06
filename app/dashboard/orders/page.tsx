@@ -6,7 +6,9 @@ import dynamic from "next/dynamic";
 import { RefreshCw, Eye, Printer, Truck, Loader2, Search, ChevronDown, Tag, X, Plus, Save, CheckCircle2, XCircle, Merge, Trash2, BadgeCheck } from "lucide-react";
 import type { AddressValue } from "@/components/orders/AddressPicker";
 import { phoneKey } from "@/lib/phone";
+import { GOV_EN } from "@/lib/shopify/provinces";
 import { ShipModal } from "@/components/orders/ShipModal";
+import { printOrderLabel } from "@/lib/print-label";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { Badge } from "@/components/ui/Badge";
@@ -108,18 +110,6 @@ const AddressPicker = dynamic(() => import("@/components/orders/AddressPicker"),
 
 // ── Create Order Modal ─────────────────────────────────────────────────
 interface NewOrderItem { title: string; variantId?: number; qty: number; price: number }
-
-const GOV_EN: Record<string, string> = {
-  "القاهرة":"Cairo","الإسكندرية":"Alexandria","الجيزة":"Giza",
-  "الشرقية":"Al Sharqia","الدقهلية":"Dakahlia","البحيرة":"Beheira",
-  "المنوفية":"Monufia","الغربية":"Gharbia","كفر الشيخ":"Kafr el-Sheikh",
-  "الإسماعيلية":"Ismailia","بورسعيد":"Port Said","بور سعيد":"Port Said","السويس":"Suez",
-  "شمال سيناء":"North Sinai","جنوب سيناء":"South Sinai","الفيوم":"Faiyum",
-  "بني سويف":"Beni Suef","المنيا":"Minya","أسيوط":"Asyut",
-  "سوهاج":"Sohag","قنا":"Qena","الأقصر":"Luxor","أسوان":"Aswan",
-  "البحر الأحمر":"Red Sea","الوادي الجديد":"New Valley","مطروح":"Matrouh","مرسى مطروح":"Matrouh",
-  "دمياط":"Damietta","القليوبية":"Qalyubia",
-};
 
 function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (o: XenoOrder, replacedShopifyIds?: number[]) => void }) {
   const [name,          setName]          = useState("");
@@ -1123,7 +1113,7 @@ export default function OrdersPage() {
                             {order.trackingNumber ? (
                               <button className="p-1.5 rounded-[var(--radius-sm)] text-[var(--success)] hover:bg-[var(--success-light)] transition-colors"
                                 title="طباعة البوليصة"
-                                onClick={() => window.open(`/dashboard/orders/${order.id}/label`, "_blank")}>
+                                onClick={() => printOrderLabel(order.shopifyId).catch((err) => error("فشل الطباعة", err instanceof Error ? err.message : String(err)))}>
                                 <Printer size={14} />
                               </button>
                             ) : (
