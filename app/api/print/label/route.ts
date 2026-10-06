@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/client";
 import { printJTOrder } from "@/lib/jt/client";
+import { getLabelItems } from "@/lib/label-items";
 
 // POST /api/print/label  { shopify_order_id }
 // Fetches the waybill from J&T (which marks it "Printed" there) and marks it printed here.
@@ -18,7 +19,10 @@ export async function POST(req: NextRequest) {
   if (error)  return NextResponse.json({ error: error.message }, { status: 500 });
   if (!ship)  return NextResponse.json({ error: "الطلب ده ملوش شحنة على J&T" }, { status: 404 });
 
-  const res = await printJTOrder(ship.tracking_number);
+  const [res, items] = await Promise.all([
+    printJTOrder(ship.tracking_number),
+    getLabelItems(Number(shopify_order_id)),
+  ]);
   if (!res.ok) return NextResponse.json({ error: res.error }, { status: 422 });
 
   await supabaseAdmin
@@ -34,5 +38,5 @@ export async function POST(req: NextRequest) {
     metadata:  { order_number: ship.order_number, tracking_number: ship.tracking_number },
   });
 
-  return NextResponse.json({ ok: true, pdfBase64: res.pdfBase64, url: res.url });
+  return NextResponse.json({ ok: true, pdfBase64: res.pdfBase64, url: res.url, items });
 }
