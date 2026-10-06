@@ -3,6 +3,7 @@
 // Must be called directly from a click handler (it opens the tab before awaiting).
 
 export interface LabelItem { qty: number; name: string; color: string; size: string; sku: string }
+export interface LabelSender { name: string; phone: string; city: string }
 
 // preview: show the label on screen without printing or recording a print
 export async function printOrderLabel(shopifyOrderId: number, opts: { preview?: boolean } = {}): Promise<void> {
@@ -24,7 +25,7 @@ export async function printOrderLabel(shopifyOrderId: number, opts: { preview?: 
     if (!res.ok || !data.ok) throw new Error(data.error ?? "فشل جلب البوليصة من J&T");
 
     if (data.pdfBase64 && win) {
-      writeLabelPage(win, data.pdfBase64, data.items ?? [], !opts.preview);
+      writeLabelPage(win, data.pdfBase64, data.items ?? [], !opts.preview, data.sender ?? null);
       return;
     }
     const href = data.pdfBase64 ? base64PdfUrl(data.pdfBase64) : data.url;
@@ -46,14 +47,14 @@ function base64PdfUrl(b64: string) {
 // (between the "REMARKS" title and the footer row). If the box can't be found or
 // the table doesn't fit, the table goes on a second label instead.
 // If pdf.js fails to load, J&T's PDF is shown as-is.
-function writeLabelPage(win: Window, pdfBase64: string, items: LabelItem[], autoPrint: boolean) {
+function writeLabelPage(win: Window, pdfBase64: string, items: LabelItem[], autoPrint: boolean, sender: LabelSender | null) {
   win.document.open();
-  win.document.write(labelPageHtml(pdfBase64, items, base64PdfUrl(pdfBase64), autoPrint));
+  win.document.write(labelPageHtml(pdfBase64, items, base64PdfUrl(pdfBase64), autoPrint, sender));
   win.document.close();
 }
 
-export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl: string, autoPrint = true): string {
-  const payload = JSON.stringify({ pdf: pdfBase64, items }).replace(/</g, "\\u003c");
+export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl: string, autoPrint = true, sender: LabelSender | null = null): string {
+  const payload = JSON.stringify({ pdf: pdfBase64, items, sender }).replace(/</g, "\\u003c");
   return `<!doctype html>
 <html lang="ar"><head><meta charset="utf-8"><title>بوليصة الشحن</title>
 <style>
@@ -193,6 +194,99 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
         lineRows.forEach(function (yl2) { ctx.fillRect(sep.left, yl2, rightB.left - sep.left, 1); });
         px = ctx.getImageData(0, 0, Wp, Hp).data;
         vruns = vruns.filter(function (v) { return v !== sep; });
+      }
+
+      // 1b) Receiver: centre each line (closing the big gap between name and phone).
+      //     Sender: one centred line "FROM: XENO  phone  city" instead of J&T's block.
+      try { restyleAddress(); } catch (e) { layoutNote = "address: " + (e && e.message); }
+      px = ctx.getImageData(0, 0, Wp, Hp).data;
+      function restyleAddress() {
+        var toItem = null, fromItem = null;
+        text.items.forEach(function (t) {
+          var s = (t.str || "").trim().toLowerCase();
+          if (!toItem && s.slice(0, 3) === "to:") toItem = t;
+          if (!fromItem && s.slice(0, 4) === "from") fromItem = t;
+        });
+        if (!toItem || !fromItem) { layoutNote = "address: no To/FROM text"; return; }
+        function topPx(t) { return (H - t.transform[5] - t.height) * S; }
+        function basePx(t) { return (H - t.transform[5]) * S; }
+        // section lines inside the band (full width now that the side column is gone)
+        var rows = [];
+        for (var yy = y0; yy < y1; yy++) {
+          var dk = 0, n = 0;
+          for (var xx = leftB.right + 2; xx < rightB.left - 2; xx += 3) { n++; if (lum(xx, yy) < 128) dk++; }
+          if (n && dk / n > 0.85) rows.push(yy);
+        }
+        function lineAboveY(yPx) {
+          var r = -1;
+          rows.forEach(function (v) { if (v < yPx && v > r) r = v; });
+          if (r < 0) return null;
+          var top = r;
+          while (rows.indexOf(top - 1) >= 0) top--;
+          return { top: top, bottom: r };
+        }
+        var aboveTo = lineAboveY(topPx(toItem)), aboveFrom = lineAboveY(topPx(fromItem));
+        if (!aboveFrom || (aboveTo && aboveTo.bottom >= aboveFrom.top)) { layoutNote = "address: section lines"; return; }
+        var toBox = { top: aboveTo ? aboveTo.bottom + 1 : y0, bottom: aboveFrom.top - 1 };
+        var fromBox = { top: aboveFrom.bottom + 1, bottom: y1 - 1 };
+        var inL = leftB.right + 1, inR = rightB.left - 1, mid = (inL + inR) / 2;
+
+        // Receiver lines → segments of nearby text items → re-placed centred
+        var toItems = text.items.filter(function (t) {
+          var b = basePx(t);
+          return (t.str || "").trim() && t.width > 0 && b > toBox.top && b < toBox.bottom;
+        });
+        var lines2 = [];
+        toItems.sort(function (a, b) { return basePx(a) - basePx(b); }).forEach(function (t) {
+          var ln = lines2.find(function (l) { return Math.abs(l.base - basePx(t)) < 2 * S; });
+          if (ln) ln.items.push(t); else lines2.push({ base: basePx(t), items: [t] });
+        });
+        var pieces = [];
+        lines2.forEach(function (ln) {
+          ln.items.sort(function (a, b) { return a.transform[4] - b.transform[4]; });
+          var h = Math.max.apply(null, ln.items.map(function (t) { return t.height; })) * S;
+          var top = Math.max(toBox.top + 1, Math.round(ln.base - h * 1.05));
+          var bottom = Math.min(toBox.bottom - 1, Math.round(ln.base + h * 0.35));
+          var segs = [];
+          ln.items.forEach(function (t) {
+            var x0 = Math.floor(t.transform[4] * S) - 2, x1 = Math.ceil((t.transform[4] + t.width) * S) + 2;
+            var last = segs[segs.length - 1];
+            if (last && x0 - last.x1 < 6 * S) last.x1 = Math.max(last.x1, x1); else segs.push({ x0: x0, x1: x1 });
+          });
+          segs.forEach(function (sg) {
+            sg.x0 = Math.max(inL, sg.x0); sg.x1 = Math.min(inR, sg.x1);
+            var cv2 = document.createElement("canvas");
+            cv2.width = Math.max(1, sg.x1 - sg.x0); cv2.height = Math.max(1, bottom - top);
+            cv2.getContext("2d").drawImage(canvas, sg.x0, top, cv2.width, cv2.height, 0, 0, cv2.width, cv2.height);
+            sg.cv = cv2;
+          });
+          pieces.push({ top: top, segs: segs });
+        });
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(inL, toBox.top, inR - inL, toBox.bottom - toBox.top);
+        var gap = 8 * S;
+        pieces.forEach(function (pc) {
+          var total = pc.segs.reduce(function (a, sg) { return a + sg.cv.width; }, 0) + gap * (pc.segs.length - 1);
+          var x = Math.max(inL, mid - total / 2);
+          pc.segs.forEach(function (sg) { ctx.drawImage(sg.cv, x, pc.top); x += sg.cv.width + gap; });
+        });
+
+        // Sender → one line drawn by us (keeps J&T's FROM line if we have no sender data)
+        var snd = data.sender;
+        if (!snd || !snd.name) return;
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(inL, fromBox.top, inR - inL, fromBox.bottom - fromBox.top);
+        var fs = fromItem.height * S * 1.1;
+        var parts = ["FROM: " + snd.name, snd.phone, snd.city].filter(function (p) { return p; });
+        ctx.font = "700 " + fs + "px Arial";
+        ctx.direction = "ltr";
+        var sp = fs * 1.4;
+        var widths = parts.map(function (p) { return ctx.measureText(p).width; });
+        var tot = widths.reduce(function (a, w) { return a + w; }, 0) + sp * (parts.length - 1);
+        var xx2 = mid - tot / 2;
+        ctx.fillStyle = "#000"; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+        var by2 = fromBox.top + fs * 1.25;
+        parts.forEach(function (p, i) { ctx.fillText(p, xx2, by2); xx2 += widths[i] + sp; });
       }
 
       // 2) Find empty rows in the band (ignoring the vertical borders) and cut the gaps
