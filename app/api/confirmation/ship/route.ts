@@ -86,6 +86,7 @@ export async function POST(req: NextRequest) {
       governorate:  shopifyOrder?.province     ?? o.governorate ?? "",
       items:        itemsToShip,
       totalAmount:  shopifyOrder?.total        ?? o.total       ?? 0,
+      note:         shopifyOrder?.note,
     });
 
     // Save shipment record so the tracking number shows in the orders list
@@ -149,7 +150,7 @@ async function fetchShopifyOrder(shopifyOrderId: number) {
 
   try {
     const res  = await fetch(
-      `https://${shop}/admin/api/${version}/orders/${shopifyOrderId}.json?fields=id,order_number,total_price,shipping_address,line_items`,
+      `https://${shop}/admin/api/${version}/orders/${shopifyOrderId}.json?fields=id,order_number,total_price,note,shipping_address,line_items`,
       { headers: { "X-Shopify-Access-Token": token }, cache: "no-store", signal: controller.signal }
     );
     clearTimeout(timer);
@@ -169,9 +170,12 @@ async function fetchShopifyOrder(shopifyOrderId: number) {
       phone:        addr?.phone    ?? "",
       customerName: `${firstName} ${lastName}`.trim() || "",
       total:        parseFloat(ord.total_price ?? "0"),
-      items:        (ord.line_items ?? []).map((li: { title: string; quantity: number }) => ({
-        name: li.title,
-        qty:  li.quantity,
+      note:         (ord.note as string | null) ?? "",
+      items:        (ord.line_items ?? []).map((li: { title: string; quantity: number; sku?: string | null; variant_title?: string | null }) => ({
+        name:    li.title,
+        qty:     li.quantity,
+        sku:     li.sku ?? "",
+        variant: li.variant_title ?? "",
       })),
     };
   } catch (e) {

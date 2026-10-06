@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
     postponed_until?: string | null;
     inquiry_type?:    string | null;
     internal_note?:   string | null;
-    items_override?:  { name: string; qty: number }[] | null;
+    items_override?:  { name: string; qty: number; sku?: string; variant?: string }[] | null;
   };
 
   // Build upsert payload — only include op_status if explicitly provided

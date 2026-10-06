@@ -189,7 +189,7 @@ function EditItemsModal({ open, order, onClose, onSaved }: EditItemsModalProps) 
           customer_name:    order.customerName,
           phone:            order.customerPhone,
           total,
-          items_override: items.map((i) => ({ name: `${i.productName}${i.variant ? ` (${i.variant})` : ""}`, qty: i.quantity })),
+          items_override: items.map((i) => ({ name: i.productName, variant: i.variant, sku: i.sku, qty: i.quantity })),
         }),
       });
 
