@@ -44,7 +44,7 @@ export async function GET() {
   let traceResult: { data: unknown; jtCode: unknown; jtMsg: unknown; ok: boolean; error?: string } = { data: null, jtCode: null, jtMsg: null, ok: false };
   try {
     const { data } = await jtPost(BASE_URL, UUID, API_ACCOUNT, PRIVATE_KEY, "/api/logistics/trace", {
-      billCode: "TEST-XENO-000",
+      billCodes: "TEST-XENO-000",
     });
     // 145003100 = "Illegal waybill" → header auth OK; code=1 = actual success
     const ok = data?.code === "1" || data?.code === 1 || data?.code === "145003100" || String(data?.code).startsWith("1450");

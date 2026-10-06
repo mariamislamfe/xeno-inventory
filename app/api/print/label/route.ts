@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
   if (error)  return NextResponse.json({ error: error.message }, { status: 500 });
   if (!ship)  return NextResponse.json({ error: "الطلب ده ملوش شحنة على J&T" }, { status: 404 });
 
-  const res = await printJTOrder(ship.order_number, ship.tracking_number);
+  const res = await printJTOrder(ship.tracking_number);
   if (!res.ok) return NextResponse.json({ error: res.error }, { status: 422 });
 
   await supabaseAdmin
