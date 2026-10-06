@@ -92,6 +92,21 @@ const JT_ERRORS: Record<string, string> = {
   "145003100": "رقم البوليصة غير صحيح عند J&T",
 };
 
+export interface JTItem { name: string; qty: number; sku?: string; variant?: string }
+
+// "NK2 ×2 + AB5" — the SKU summary goes at the top of the waybill instead of the order number
+export function skuSummary(items: JTItem[]): string {
+  return items.map((i) => `${i.sku?.trim() || i.name}${i.qty > 1 ? ` ×${i.qty}` : ""}`).join(" + ");
+}
+
+// "NK2 تيشيرت (أسود / XL) ×2; AB5 شورت (كحلي / L) ×1" — details printed under it
+export function itemsDetail(items: JTItem[]): string {
+  return items.map((i) => {
+    const variant = i.variant && !i.name.includes(i.variant) ? ` (${i.variant})` : "";
+    return `${i.sku?.trim() ? `${i.sku.trim()} ` : ""}${i.name}${variant} ×${i.qty}`;
+  }).join("; ");
+}
+
 export interface JTOrderInput {
   orderNumber:  string;
   customerName: string;
@@ -99,8 +114,9 @@ export interface JTOrderInput {
   address:      string;
   city:         string;
   governorate:  string;
-  items:        { name: string; qty: number }[];
+  items:        JTItem[];
   totalAmount:  number;
+  note?:        string;
   weightKg?:    number;
 }
 
@@ -149,7 +165,10 @@ export function buildAddOrderBiz(order: JTOrderInput): { ok: true; biz: Record<s
 
   const goodsType = process.env.JT_GOODS_TYPE ?? "ITN16"; // ITN16 = Others
   const amount    = String(Math.max(0, Math.round(order.totalAmount * 100) / 100));
-  const itemsText = order.items.map((i) => `${i.name} *${i.qty}`).join("; ") || "منتجات";
+  const skuText   = skuSummary(order.items) || "منتجات";
+  const itemsText = itemsDetail(order.items) || "منتجات";
+  const pieces    = order.items.reduce((n, i) => n + i.qty, 0);
+  const remark    = [skuText, `${pieces} قطعة: ${itemsText}`, order.note?.trim()].filter(Boolean).join(" | ");
   const street    = (order.address || receiverAddr.area).slice(0, 200);
 
   const biz = {
@@ -171,7 +190,7 @@ export function buildAddOrderBiz(order: JTOrderInput): { ok: true; biz: Record<s
     totalQuantity: 1,                                    // must be 1 (int)
     itemsValue:    amount,                               // amount to collect from the customer
     priceCurrency: "EGP",
-    remark:        `XENO #${txlogisticId}`,
+    remark:        remark.slice(0, 200),
     pickInfo:      itemsText.slice(0, 500),
 
     sender: {
@@ -200,8 +219,8 @@ export function buildAddOrderBiz(order: JTOrderInput): { ok: true; biz: Record<s
 
     items: [{
       itemType:      goodsType,
-      itemName:      itemsText.slice(0, 30),
-      englishName:   itemsText.slice(0, 60),
+      itemName:      skuText.slice(0, 30),
+      englishName:   skuText.slice(0, 60),
       number:        1,                                  // spec: ≤ 1
       itemValue:     amount,
       priceCurrency: "EGP",
@@ -279,7 +298,7 @@ export async function printJTOrder(billCode: string): Promise<
       billCode,
       printSize:           0, // one-sided sheet (thermal label)
       printCod:            1, // show the COD amount for the courier
-      showCustomerOrderId: 1, // barcode of our order number
+      showCustomerOrderId: 0, // no order-number barcode — the SKU summary is shown instead
     }, 30_000);
     const ok = data?.code === "1" || data?.code === 1;
     const pdfBase64 = data?.data?.base64EncodeContent as string | undefined;
