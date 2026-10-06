@@ -120,10 +120,135 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
       }
     });
 
+    var cods = null, fod = null;
+    text.items.forEach(function (t) {
+      var s = (t.str || "").trim();
+      if (!cods && /^cods$/i.test(s)) cods = t; // not the big "COD" badge
+      if (!fod && /^fod$/i.test(s)) fod = t;
+    });
+
+    // Make room for the items table: drop the sideways barcode (the main barcode stays
+    // on top), write XENO in its place, squeeze the empty gaps in the address section,
+    // and give the freed height to the REMARKS box. Works on the rendered pixels; any
+    // surprise in the layout returns null and the label is used as J&T made it.
+    function compactLayout() {
+      if (!cods || !remarks || !footer) return null;
+      var ctx = canvas.getContext("2d", { willReadFrequently: true });
+      var Wp = canvas.width, Hp = canvas.height, S = SCALE;
+      var px = ctx.getImageData(0, 0, Wp, Hp).data;
+      function lum(x, y) { var i = (y * Wp + x) * 4; return (px[i] * 299 + px[i + 1] * 587 + px[i + 2] * 114) / 1000; }
+
+      // Full-width horizontal lines (row borders)
+      var lines = [], run = null;
+      for (var y = 0; y < Hp; y++) {
+        var dark = 0;
+        for (var x = 0; x < Wp; x += 2) if (lum(x, y) < 128) dark++;
+        if (dark / (Wp / 2) > 0.85) { if (run) run.bottom = y; else run = { top: y, bottom: y }; }
+        else if (run) { lines.push(run); run = null; }
+      }
+      if (run) lines.push(run);
+      function lineAbove(yPx) { var b = null; lines.forEach(function (l) { if (l.bottom < yPx && (!b || l.bottom > b.bottom)) b = l; }); return b; }
+      function lineBelow(yPx) { var b = null; lines.forEach(function (l) { if (l.top > yPx && (!b || l.top < b.top)) b = l; }); return b; }
+      var lCods = lineBelow((H - cods.transform[5]) * S);
+      var lRem  = lineAbove((H - remarks.transform[5] - remarks.height) * S);
+      var lFoot = lineAbove((H - footer.transform[5] - footer.height) * S);
+      if (!lCods || !lRem || !lFoot || !(lCods.bottom < lRem.top && lRem.bottom < lFoot.top)) return null;
+
+      // The address band sits between the Cods row and REMARKS
+      var y0 = lCods.bottom + 1, y1 = lRem.top, bandH = y1 - y0;
+      if (bandH < 20 * S) return null;
+      var vruns = [], vr = null;
+      for (var x2 = 0; x2 < Wp; x2++) {
+        var d = 0;
+        for (var y2 = y0; y2 < y1; y2 += 2) if (lum(x2, y2) < 128) d++;
+        if (d / (bandH / 2) > 0.9) { if (vr) vr.right = x2; else vr = { left: x2, right: x2 }; }
+        else if (vr) { vruns.push(vr); vr = null; }
+      }
+      if (vr) vruns.push(vr);
+      if (vruns.length < 2) return null;
+      var leftB = vruns[0], rightB = vruns[vruns.length - 1];
+      if (leftB.left > Wp * 0.1 || rightB.right < Wp * 0.9) return null;
+      var sep = null;
+      vruns.forEach(function (v) { if (!sep && v.left > Wp * 0.55 && v.right < rightB.left - S) sep = v; });
+
+      // 1) Blank the sideways barcode column
+      if (sep) {
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(sep.right + 1, y0, rightB.left - sep.right - 1, bandH);
+        px = ctx.getImageData(0, 0, Wp, Hp).data;
+      }
+
+      // 2) Find empty rows in the band (ignoring the vertical borders) and cut the gaps
+      function rowBlank(yy) {
+        for (var xx = leftB.right + 3; xx < rightB.left - 2; xx++) {
+          var onLine = false;
+          for (var k = 0; k < vruns.length; k++) {
+            if (xx >= vruns[k].left - 2 && xx <= vruns[k].right + 2) { onLine = true; break; }
+          }
+          if (!onLine && lum(xx, yy) < 170) return false;
+        }
+        return true;
+      }
+      var pad = Math.round(2.5 * S), cuts = [], start = -1;
+      for (var y3 = y0; y3 <= y1; y3++) {
+        var blank = y3 < y1 && rowBlank(y3);
+        if (blank && start < 0) start = y3;
+        if (!blank && start >= 0) {
+          if (y3 - start > 2 * pad + S) cuts.push([start + pad, y3 - pad]);
+          start = -1;
+        }
+      }
+
+      // 3) Re-stack: band without the gaps → REMARKS title → stretched REMARKS box → footer
+      var out = document.createElement("canvas");
+      out.width = Wp; out.height = Hp;
+      var o = out.getContext("2d");
+      o.fillStyle = "#fff"; o.fillRect(0, 0, Wp, Hp);
+      var dy = 0, sy = 0;
+      function copy(from, to) {
+        if (to > from) { o.drawImage(canvas, 0, from, Wp, to - from, 0, dy, Wp, to - from); dy += to - from; }
+      }
+      cuts.forEach(function (c) { copy(sy, c[0]); sy = c[1]; });
+      copy(sy, y1);
+      var bandBottom = dy;
+      copy(y1, Math.round((H - remarks.transform[5] + 1.5) * S));
+      var tableTop = dy;
+      var filler = document.createElement("canvas");
+      filler.width = Wp; filler.height = 1;
+      var f = filler.getContext("2d");
+      f.drawImage(canvas, 0, lFoot.top - 3, Wp, 1, 0, 0, Wp, 1);
+      f.fillStyle = "#fff"; f.fillRect(leftB.right + 1, 0, rightB.left - leftB.right - 1, 1);
+      if (lFoot.top > dy) o.drawImage(filler, 0, 0, Wp, 1, 0, dy, Wp, lFoot.top - dy);
+      o.drawImage(canvas, 0, lFoot.top, Wp, Hp - lFoot.top, 0, lFoot.top, Wp, Hp - lFoot.top);
+
+      // 4) XENO where the sideways barcode was
+      if (sep) {
+        var colW = rightB.left - sep.right, colH = bandBottom - y0;
+        var size = colW * 0.7;
+        o.save();
+        o.translate((sep.right + rightB.left) / 2, (y0 + bandBottom) / 2);
+        o.rotate(-Math.PI / 2);
+        o.font = "bold " + size + "px Arial";
+        var tw = o.measureText("XENO").width;
+        if (tw > colH * 0.85) { size = size * colH * 0.85 / tw; o.font = "bold " + size + "px Arial"; }
+        o.fillStyle = "#000"; o.textAlign = "center"; o.textBaseline = "middle";
+        o.fillText("XENO", 0, 0);
+        o.restore();
+      }
+
+      return {
+        canvas: out,
+        top: tableTop / S, bottom: (lFoot.top - 2) / S,
+        xeno: !!sep,
+      };
+    }
+    var layout = null;
+    try { layout = compactLayout(); } catch (e) { console.error(e); layout = null; }
+
     var sheet = document.createElement("div");
     sheet.className = "page";
     var img = new Image();
-    img.src = canvas.toDataURL("image/png");
+    img.src = (layout ? layout.canvas : canvas).toDataURL("image/png");
     sheet.appendChild(img);
     document.body.appendChild(sheet);
 
@@ -152,12 +277,6 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
       d.textContent = str;
       sheet.appendChild(d);
     }
-    var cods = null, fod = null;
-    text.items.forEach(function (t) {
-      var s = (t.str || "").trim();
-      if (!cods && /^cods?$/i.test(s)) cods = t;
-      if (!fod && /^fod$/i.test(s)) fod = t;
-    });
     if (cods) {
       var amount = null;
       text.items.forEach(function (t) {
@@ -177,6 +296,13 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
     function buildTable(fontPt) {
       var table = document.createElement("table");
       table.style.fontSize = fontPt + "pt";
+      // No barcode column to hold the company name → put it above the table
+      if (!(layout && layout.xeno)) {
+        var cap = table.createCaption();
+        cap.textContent = "XENO";
+        cap.style.fontWeight = "700";
+        cap.style.fontSize = (fontPt + 2) + "pt";
+      }
       var head = table.insertRow();
       ["العدد", "المنتج", "اللون", "المقاس", "الكود"].forEach(function (h) {
         var th = document.createElement("th"); th.textContent = h; head.appendChild(th);
@@ -191,12 +317,13 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
     }
 
     var placed = false;
-    if (data.items.length && remarks && footer) {
-      var top = H - remarks.transform[5] + 1.5;                 // just under the "REMARKS" title
-      var bottom = H - (footer.transform[5] + footer.height) - 9; // above the footer row line
+    if (data.items.length && (layout || (remarks && footer))) {
+      var top = layout ? layout.top : H - remarks.transform[5] + 1.5;                    // just under the "REMARKS" title
+      var bottom = layout ? layout.bottom : H - (footer.transform[5] + footer.height) - 9; // above the footer row line
       if (bottom - top > 18) {
         // Blank out J&T's one-line remark text, leaving the box borders alone
-        if (remarkBottom !== null) {
+        // (the compacted layout already rebuilt the box empty)
+        if (!layout && remarkBottom !== null) {
           var cover = document.createElement("div");
           cover.className = "cover";
           cover.style.left = "2pt"; cover.style.width = (W - 4) + "pt";
