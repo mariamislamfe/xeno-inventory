@@ -4,13 +4,14 @@
 
 export interface LabelItem { qty: number; name: string; color: string; size: string; sku: string }
 
-export async function printOrderLabel(shopifyOrderId: number): Promise<void> {
+// preview: show the label on screen without printing or recording a print
+export async function printOrderLabel(shopifyOrderId: number, opts: { preview?: boolean } = {}): Promise<void> {
   const win = window.open("", "_blank");
   try {
     const res  = await fetch("/api/print/label", {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ shopify_order_id: shopifyOrderId }),
+      body:    JSON.stringify({ shopify_order_id: shopifyOrderId, preview: opts.preview ?? false }),
     });
     const data = await res.json().catch(() => ({}));
 
@@ -23,7 +24,7 @@ export async function printOrderLabel(shopifyOrderId: number): Promise<void> {
     if (!res.ok || !data.ok) throw new Error(data.error ?? "فشل جلب البوليصة من J&T");
 
     if (data.pdfBase64 && win) {
-      writeLabelPage(win, data.pdfBase64, data.items ?? []);
+      writeLabelPage(win, data.pdfBase64, data.items ?? [], !opts.preview);
       return;
     }
     const href = data.pdfBase64 ? base64PdfUrl(data.pdfBase64) : data.url;
@@ -45,13 +46,13 @@ function base64PdfUrl(b64: string) {
 // (between the "REMARKS" title and the footer row). If the box can't be found or
 // the table doesn't fit, the table goes on a second label instead.
 // If pdf.js fails to load, J&T's PDF is shown as-is.
-function writeLabelPage(win: Window, pdfBase64: string, items: LabelItem[]) {
+function writeLabelPage(win: Window, pdfBase64: string, items: LabelItem[], autoPrint: boolean) {
   win.document.open();
-  win.document.write(labelPageHtml(pdfBase64, items, base64PdfUrl(pdfBase64)));
+  win.document.write(labelPageHtml(pdfBase64, items, base64PdfUrl(pdfBase64), autoPrint));
   win.document.close();
 }
 
-export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl: string): string {
+export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl: string, autoPrint = true): string {
   const payload = JSON.stringify({ pdf: pdfBase64, items }).replace(/</g, "\\u003c");
   return `<!doctype html>
 <html lang="ar"><head><meta charset="utf-8"><title>بوليصة الشحن</title>
@@ -69,6 +70,10 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
   th { font-weight: 700; background: #eee; }
   td.qty, td.sku { font-weight: 700; white-space: nowrap; }
   .more { font-size: 7pt; font-weight: 700; text-align: center; padding-top: 2pt; }
+  @media screen {
+    body { background: #e5e7eb; padding: 16px 0; }
+    .page { margin: 0 auto 16px; background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.15); }
+  }
   @media print { #status { display: none; } }
 </style></head>
 <body><div id="status">جارٍ تجهيز البوليصة...</div>
@@ -183,7 +188,7 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
 
     document.getElementById("status").remove();
     await new Promise(function (r) { if (img.complete) r(); else img.onload = r; });
-    setTimeout(function () { window.print(); }, 200);
+    ${autoPrint ? 'setTimeout(function () { window.print(); }, 200);' : 'document.title = "معاينة البوليصة";'}
   } catch (e) {
     console.error(e);
     location.replace(fallback);
