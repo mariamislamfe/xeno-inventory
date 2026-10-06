@@ -221,16 +221,20 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
       var bandBottom = dy;
       copy(y1, Math.round((H - remarks.transform[5] + 1.5) * S));
       var tableTop = dy;
+      // J&T's footer row (hotline + print date) moves into our black strip
       var BRAND = Math.round(24 * S);
-      if (lFoot.top - BRAND - tableTop < 45 * S) BRAND = 0;   // keep the table roomy first
-      var footTop = lFoot.top - BRAND;
+      var footTop = Hp - BRAND;
+      var phone = "";
+      text.items.forEach(function (t) {
+        var s2 = (t.str || "").trim();
+        if (t !== footer && /^[0-9]{3,}$/.test(s2) && Math.abs(t.transform[5] - footer.transform[5]) < 4) phone = s2;
+      });
       var filler = document.createElement("canvas");
       filler.width = Wp; filler.height = 1;
       var f = filler.getContext("2d");
       f.drawImage(canvas, 0, lFoot.top - 3, Wp, 1, 0, 0, Wp, 1);
       f.fillStyle = "#fff"; f.fillRect(leftB.right + 1, 0, rightB.left - leftB.right - 1, 1);
       if (footTop > dy) o.drawImage(filler, 0, 0, Wp, 1, 0, dy, Wp, footTop - dy);
-      o.drawImage(canvas, 0, lFoot.top, Wp, Hp - lFoot.top, 0, footTop, Wp, Hp - lFoot.top);
 
       // 4) Black column with white XENO (reading top → bottom) where the sideways barcode was
       if (sep) {
@@ -239,13 +243,13 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
         o.fillStyle = "#000";
         o.fillRect(cx0, cy0, cx1 - cx0, cy1 - cy0);
         var colW = cx1 - cx0, colH = cy1 - cy0;
-        var size = colW * 0.72;
+        var size = colW * 0.6;
         o.save();
         o.translate((cx0 + cx1) / 2, (cy0 + cy1) / 2);
         o.rotate(Math.PI / 2);
         o.font = "900 " + size + "px 'Arial Black', Arial, sans-serif";
         var tw = o.measureText("XENO").width;
-        if (tw > colH * 0.8) { size = size * colH * 0.8 / tw; o.font = "900 " + size + "px 'Arial Black', Arial, sans-serif"; tw = o.measureText("XENO").width; }
+        if (tw > colH * 0.62) { size = size * colH * 0.62 / tw; o.font = "900 " + size + "px 'Arial Black', Arial, sans-serif"; tw = o.measureText("XENO").width; }
         o.fillStyle = "#fff"; o.textAlign = "center"; o.textBaseline = "middle";
         o.fillText("XENO", 0, 0);
         o.font = (size * 0.22) + "px Arial";
@@ -253,29 +257,33 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
         o.restore();
       }
 
-      // 5) Brand strip: XENO · IT'S NOT CLOTHES. IT'S XENO · ///
-      if (BRAND) {
-        var by = Hp - BRAND;
-        o.fillStyle = "#000";
-        o.fillRect(0, by, Wp, BRAND);
-        o.fillStyle = "#fff"; o.textBaseline = "middle";
-        o.textAlign = "left";
-        o.font = "900 " + (BRAND * 0.5) + "px 'Arial Black', Arial, sans-serif";
-        o.fillText("XENO", 6 * S, by + BRAND / 2);
-        o.textAlign = "center";
-        o.font = (BRAND * 0.17) + "px Arial";
-        if ("letterSpacing" in o) o.letterSpacing = (BRAND * 0.09) + "px";
-        o.fillText("IT'S NOT CLOTHES.", Wp / 2, by + BRAND * 0.36);
-        o.fillText("IT'S XENO", Wp / 2, by + BRAND * 0.66);
-        if ("letterSpacing" in o) o.letterSpacing = "0px";
-        o.fillStyle = "#bbb";
-        for (var k2 = 0; k2 < 3; k2++) {
-          var sx = Wp - 8 * S - (3 - k2) * BRAND * 0.32;
-          o.beginPath();
-          o.moveTo(sx, by + BRAND * 0.72); o.lineTo(sx + BRAND * 0.16, by + BRAND * 0.72);
-          o.lineTo(sx + BRAND * 0.42, by + BRAND * 0.28); o.lineTo(sx + BRAND * 0.26, by + BRAND * 0.28);
-          o.closePath(); o.fill();
-        }
+      // 5) Brand strip: XENO · ☎ hotline · print date · ///
+      var by = Hp - BRAND;
+      o.fillStyle = "#000";
+      o.fillRect(0, by, Wp, BRAND);
+      o.fillStyle = "#fff"; o.textBaseline = "middle"; o.textAlign = "left";
+      o.font = "900 " + (BRAND * 0.5) + "px 'Arial Black', Arial, sans-serif";
+      o.fillText("XENO", 6 * S, by + BRAND / 2);
+      var logoEnd = 6 * S + o.measureText("XENO").width;
+      var stripesW = 3 * BRAND * 0.32;
+      o.font = "600 " + (BRAND * 0.3) + "px Arial";
+      if (phone) {
+        var px0 = logoEnd + 10 * S;
+        o.font = (BRAND * 0.36) + "px 'Segoe UI Symbol', 'Noto Sans Symbols', Arial";
+        o.fillText("☎", px0, by + BRAND / 2);
+        var iconW = o.measureText("☎").width;
+        o.font = "600 " + (BRAND * 0.3) + "px Arial";
+        o.fillText(phone, px0 + iconW + 2 * S, by + BRAND / 2);
+      }
+      o.textAlign = "right";
+      o.fillText(footer.str.trim(), Wp - 8 * S - stripesW - 8 * S, by + BRAND / 2);
+      o.fillStyle = "#bbb";
+      for (var k2 = 0; k2 < 3; k2++) {
+        var sx = Wp - 8 * S - (3 - k2) * BRAND * 0.32;
+        o.beginPath();
+        o.moveTo(sx, by + BRAND * 0.72); o.lineTo(sx + BRAND * 0.16, by + BRAND * 0.72);
+        o.lineTo(sx + BRAND * 0.42, by + BRAND * 0.28); o.lineTo(sx + BRAND * 0.26, by + BRAND * 0.28);
+        o.closePath(); o.fill();
       }
 
       return {
@@ -297,14 +305,20 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
       });
       if (!orderNo || !badge || badge.height < 10) return false;
       var S = SCALE, c = cv.getContext("2d", { willReadFrequently: true });
-      var x0 = 5 * S, x1 = (badge.transform[4] - 10) * S;
+      var x0 = 3 * S, x1 = (badge.transform[4] - 10) * S;
       var y0 = 4 * S, y1 = (H - orderNo.transform[5] - orderNo.height - 3) * S;
       if (x1 - x0 < 60 * S || y1 - y0 < 18 * S) return false;
       // only if that corner is empty
       var d = c.getImageData(x0, y0, x1 - x0, y1 - y0).data;
       for (var i = 0; i < d.length; i += 16) if (d[i] < 170) return false;
+      // Diagonal corner stripe, then the logo to its right
+      c.fillStyle = "#000";
+      c.beginPath();
+      c.moveTo(0, 13 * S); c.lineTo(13 * S, 0); c.lineTo(18 * S, 0); c.lineTo(0, 18 * S);
+      c.closePath(); c.fill();
+      x0 = 20 * S;
       var h = y1 - y0, w = x1 - x0;
-      c.fillStyle = "#000"; c.textAlign = "center"; c.textBaseline = "alphabetic";
+      c.textAlign = "center"; c.textBaseline = "alphabetic";
       var size = h * 0.62;
       c.font = "900 " + size + "px 'Arial Black', Arial, sans-serif";
       var tw = c.measureText("XENO").width;
@@ -318,6 +332,32 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
       c.fillText("PREMIUM APPAREL", cx, Math.min(y1 - 1, base + size * 0.36));
       if ("letterSpacing" in c) c.letterSpacing = "0px";
       c.fillRect(x1 + 1.5 * S, y0, 0.8 * S, h);   // divider before the COD badge
+
+      // J&T's grey COD badge → black with white text
+      var bx = Math.round((badge.transform[4] - 1) * S), byc = Math.round((H - badge.transform[5] - badge.height * 0.4) * S);
+      function lumAt(x, y) { var p = c.getImageData(x, y, 1, 1).data; return (p[0] * 299 + p[1] * 587 + p[2] * 114) / 1000; }
+      var g = lumAt(bx, byc);
+      if (g > 40 && g < 220) {
+        var L = bx, R = Math.round((badge.transform[4] + badge.width + 1) * S), T = byc, B = byc;
+        while (L > 0 && lumAt(L - 1, byc) < 235) L--;
+        while (R < cv.width - 1 && lumAt(R + 1, byc) < 235) R++;
+        while (T > 0 && lumAt(bx, T - 1) < 235) T--;
+        while (B < cv.height - 1 && lumAt(bx, B + 1) < 235) B++;
+        if (R - L > badge.width * S && B - T > badge.height * 0.8 * S && R - L < 120 * S && B - T < 60 * S) {
+          c.fillStyle = "#000";
+          c.fillRect(L, T, R - L + 1, B - T + 1);
+          c.fillStyle = "#fff"; c.textAlign = "center"; c.textBaseline = "middle";
+          c.font = "900 " + ((B - T) * 0.62) + "px 'Arial Black', Arial, sans-serif";
+          c.fillText("COD", (L + R) / 2, (T + B) / 2 + (B - T) * 0.03);
+        }
+      }
+
+      // Thin rule under "Order No." when there's a clear gap above the barcode
+      var ry = Math.round((H - orderNo.transform[5] + 2.5) * S);
+      var clear = true;
+      var rd = c.getImageData(3 * S, ry - S, cv.width - 6 * S, 2 * S).data;
+      for (var j = 0; j < rd.length; j += 16) if (rd[j] < 170) { clear = false; break; }
+      if (clear) { c.fillStyle = "#000"; c.fillRect(3 * S, ry, cv.width - 6 * S, 0.8 * S); }
       return true;
     }
     var finalCanvas = layout ? layout.canvas : canvas;
