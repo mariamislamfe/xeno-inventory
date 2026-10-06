@@ -145,3 +145,39 @@ export const CITY_ENTRIES: CityEntry[] = EGYPT_DIVISIONS.flatMap((p) =>
 export const AREA_ENTRIES: AreaEntry[] = EGYPT_DIVISIONS.flatMap((p) =>
   p.cities.flatMap((c) => c.areas.map((a) => ({ province: p.name, city: c.name, area: a.name, norm: normalizeArabic(a.name) })))
 );
+
+// ── Map a saved order address back onto the J&T list (for editing) ──
+const squash = (s: string) => normalizeArabic(s).replace(/\s+/g, "");
+const dropCityPrefix = (s: string) => s.replace(/^(مدينه|مركز|حي|قسم)\s+/, "");
+
+function findByName<T>(items: T[], raw: string, name: (t: T) => string): T | undefined {
+  const q = squash(dropCityPrefix(normalizeArabic(raw)));
+  if (!q) return undefined;
+  return items.find((t) => squash(name(t)) === q)
+    ?? items.find((t) => squash(dropCityPrefix(normalizeArabic(name(t)))) === q)
+    ?? items.find((t) => stripAl(squash(name(t))) === stripAl(q))
+    // "مطروح" ↔ "مرسى مطروح"
+    ?? (q.length >= 4 ? items.find((t) => squash(name(t)).endsWith(q) || q.endsWith(squash(name(t)))) : undefined);
+}
+
+/**
+ * Orders store the area as a prefix of address1 ("المعادي، 12 شارع 9").
+ * Returns J&T names where they match, otherwise the raw text so nothing is lost.
+ */
+export function resolveSavedAddress(input: { governorate: string; city: string; address: string }) {
+  const prov = findByName(EGYPT_DIVISIONS, input.governorate, (p) => p.name);
+  const cities = prov ? prov.cities : EGYPT_DIVISIONS.flatMap((p) => p.cities);
+  const city = findByName(cities, input.city, (c) => c.name);
+  const province = prov?.name
+    ?? (city ? EGYPT_DIVISIONS.find((p) => p.cities.includes(city))?.name : undefined)
+    ?? input.governorate;
+
+  let area = "";
+  let street = input.address ?? "";
+  const m = street.match(/^([^،,]+)[،,]\s*(.*)$/);
+  if (m && city) {
+    const a = findByName(city.areas, m[1], (x) => x.name);
+    if (a) { area = a.name; street = m[2]; }
+  }
+  return { province, city: city?.name ?? input.city, area, street };
+}

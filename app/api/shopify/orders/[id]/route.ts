@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { normalizeOrder } from "@/lib/shopify/orders";
 import type { ShopifyOrderRaw } from "@/lib/shopify/orders";
 import { withShipmentTracking } from "@/lib/shipments";
+import { GOV_EN } from "@/lib/shopify/provinces";
 
 const SHOP    = process.env.SHOPIFY_SHOP;
 const TOKEN   = process.env.SHOPIFY_ACCESS_TOKEN;
@@ -56,7 +57,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (phone)    addrFields.phone    = phone;
   if (address1) addrFields.address1 = address1;
   if (city)     addrFields.city     = city;
-  if (province) addrFields.province = province;
+  if (province) addrFields.province = GOV_EN[province] ?? province;
   if (name)     addrFields.name     = name;
   if (Object.keys(addrFields).length) update.shipping_address = addrFields;
 

@@ -2,6 +2,7 @@
 
 import React, { useState, useRef } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import {
   ArrowRight, CheckCircle2, XCircle, Truck, Phone, Mail, MapPin,
   Package, MessageSquare, Printer, Edit2, Tag, Plus, X,
@@ -13,6 +14,19 @@ import { Badge } from "@/components/ui/Badge";
 import { useToast } from "@/components/ui/Toast";
 import type { XenoOrder } from "@/lib/shopify/orders";
 import { ShipModal } from "@/components/orders/ShipModal";
+import { printOrderLabel } from "@/lib/print-label";
+import type { AddressValue } from "@/components/orders/AddressPicker";
+
+// Same J&T address picker as the new-order form (lazy: carries the full address list)
+const AddressPicker = dynamic(() => import("@/components/orders/AddressPicker"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex items-center gap-2 p-3 text-xs text-[var(--text-muted)]">
+      <Loader2 size={12} className="animate-spin" />
+      جارٍ تحميل العناوين...
+    </div>
+  ),
+});
 
 // ── Tag color map ─────────────────────────────────────────────────────────────
 const TAG_COLORS: Record<string, string> = {
@@ -267,8 +281,7 @@ interface EditModalProps {
 function EditModal({ open, order, onClose, onSaved }: EditModalProps) {
   const [phone,    setPhone]    = useState(order.customerPhone);
   const [address,  setAddress]  = useState(order.address);
-  const [city,     setCity]     = useState(order.city);
-  const [gov,      setGov]      = useState(order.governorate);
+  const [addr,     setAddr]     = useState<AddressValue>({ province: order.governorate, city: order.city, area: "" });
   const [note,     setNote]     = useState(order.note ?? "");
   const [saving,   setSaving]   = useState(false);
   const { success, error } = useToast();
@@ -278,19 +291,26 @@ function EditModal({ open, order, onClose, onSaved }: EditModalProps) {
     if (open) {
       setPhone(order.customerPhone);
       setAddress(order.address);
-      setCity(order.city);
-      setGov(order.governorate);
+      setAddr({ province: order.governorate, city: order.city, area: "" });
       setNote(order.note ?? "");
+      // Map the saved address onto the J&T list (area is stored as a prefix of address1)
+      import("@/lib/data/egypt-divisions").then(({ resolveSavedAddress }) => {
+        const r = resolveSavedAddress({ governorate: order.governorate, city: order.city, address: order.address });
+        setAddr({ province: r.province, city: r.city, area: r.area });
+        setAddress(r.street);
+      }).catch(() => {});
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleSave() {
+    if (!addr.province || !addr.city) { error("بيانات ناقصة", "اختار المحافظة والمدينة"); return; }
     setSaving(true);
+    const fullAddress = addr.area ? `${addr.area}، ${address}` : address;
     try {
       const res = await fetch(`/api/shopify/orders/${order.shopifyId}`, {
         method:  "PUT",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ phone, address1: address, city, province: gov, note }),
+        body:    JSON.stringify({ phone, address1: fullAddress, city: addr.city, province: addr.province, note }),
       });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error ?? "فشل الحفظ");
@@ -306,7 +326,7 @@ function EditModal({ open, order, onClose, onSaved }: EditModalProps) {
 
   return (
     <Modal open={open} onClose={saving ? () => {} : onClose}
-      title="تعديل بيانات الطلب" size="md"
+      title="تعديل بيانات الطلب" size="lg"
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={saving}>إلغاء</Button>
@@ -323,22 +343,11 @@ function EditModal({ open, order, onClose, onSaved }: EditModalProps) {
           <input value={phone} onChange={(e) => setPhone(e.target.value)}
             className="form-input" dir="ltr" placeholder="01xxxxxxxxx" />
         </div>
+        <AddressPicker value={addr} onChange={setAddr} />
         <div>
-          <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">العنوان</label>
+          <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">العنوان التفصيلي (الشارع / العقار)</label>
           <input value={address} onChange={(e) => setAddress(e.target.value)}
-            className="form-input" placeholder="الشارع / المنطقة" />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">المدينة</label>
-            <input value={city} onChange={(e) => setCity(e.target.value)}
-              className="form-input" placeholder="المدينة" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">المحافظة</label>
-            <input value={gov} onChange={(e) => setGov(e.target.value)}
-              className="form-input" placeholder="المحافظة" />
-          </div>
+            className="form-input" placeholder="اسم الشارع ورقم العقار" />
         </div>
         <div>
           <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">ملاحظات</label>
@@ -437,6 +446,7 @@ export function OrderDetailsClient({ order: initialOrder }: OrderDetailsClientPr
   const [editOpen,       setEditOpen]       = useState(false);
   const [editItemsOpen,  setEditItemsOpen]  = useState(false);
   const [shipOpen,       setShipOpen]       = useState(false);
+  const { error: toastError } = useToast();
 
   const st = STATUS_DISPLAY[order.status]  ?? { label: order.status,        variant: "neutral" as const };
   const pm = PAYMENT_DISPLAY[order.paymentStatus] ?? { label: order.paymentStatus, variant: "neutral" as const };
@@ -483,7 +493,7 @@ export function OrderDetailsClient({ order: initialOrder }: OrderDetailsClientPr
               تعديل المنتجات
             </Button>
             <Button variant="secondary" size="sm" icon={<Printer size={14} />}
-              onClick={() => window.open(`/dashboard/orders/${order.shopifyId}/label`, "_blank")}>
+              onClick={() => printOrderLabel(order.shopifyId).catch((err) => toastError("فشل الطباعة", err instanceof Error ? err.message : String(err)))}>
               طباعة
             </Button>
             <a

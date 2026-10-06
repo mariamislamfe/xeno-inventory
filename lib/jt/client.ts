@@ -264,3 +264,29 @@ export async function cancelJTOrder(orderNumber: string) {
     return { ok: false, error: String(err) };
   }
 }
+
+// ── Print Waybill ─────────────────────────────────────────────────────────────
+// Printing through the API is what moves the order to "Printed" on the J&T side.
+// Single parcel → base64 PDF (base64EncodeContent); multi-parcel → a PDF URL (urlContent).
+export async function printJTOrder(orderNumber: string, billCode: string): Promise<
+  { ok: true; pdfBase64?: string; url?: string } | { ok: false; error: string }
+> {
+  const txlogisticId = (orderNumber ?? "").replace(/^#/, "").trim();
+  try {
+    const data = await jtPost("/api/order/printOrder", {
+      customerCode: CUSTOMER_CODE,
+      digest:       bizDigest(),
+      txlogisticId,
+      billCode,
+    }, 30_000);
+    const ok = data?.code === "1" || data?.code === 1;
+    const pdfBase64 = data?.data?.base64EncodeContent as string | undefined;
+    const url       = data?.data?.urlContent as string | undefined;
+    if (ok && (pdfBase64 || url)) return { ok: true, pdfBase64, url };
+    const code = String(data?.code ?? "");
+    const msg  = data?.msg ?? data?.message ?? "لم يرجع ملف البوليصة";
+    return { ok: false, error: JT_ERRORS[code] ? `${JT_ERRORS[code]} (${code}: ${msg})` : `${msg} (${code})` };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}

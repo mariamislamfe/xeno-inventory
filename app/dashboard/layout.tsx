@@ -14,6 +14,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/dashboard/products": "المنتجات",
   "/dashboard/inventory": "المخزون",
   "/dashboard/shipments": "الشحنات",
+  "/dashboard/print": "الطباعة",
   "/dashboard/reports": "التقارير",
   "/dashboard/users": "المستخدمون",
   "/dashboard/settings": "الإعدادات",
