@@ -127,8 +127,8 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
     sheet.appendChild(img);
     document.body.appendChild(sheet);
 
-    // Relabel J&T's English fields: "Cods" → "المبلغ", amount → "900 جنيه", hide the
-    // always-empty "FOD" (not enabled on our account)
+    // Relabel J&T's English fields: "Cods" → "المبلغ", amount → "900 جنيه", and the
+    // always-empty "FOD" (not enabled on our account) → "COD"
     function coverItem(t) {
       var c = document.createElement("div");
       c.className = "cover";
@@ -172,7 +172,7 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
         writeAt(amount, (n % 1 ? n.toFixed(2) : String(n)) + " جنيه", true);
       }
     }
-    if (fod) coverItem(fod);
+    if (fod) { coverItem(fod); writeAt(fod, "COD", false); }
 
     function buildTable(fontPt) {
       var table = document.createElement("table");
