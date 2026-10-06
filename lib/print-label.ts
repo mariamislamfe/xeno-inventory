@@ -207,6 +207,7 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
       }
 
       // 3) Re-stack: band without the gaps → REMARKS title → stretched REMARKS box → footer
+      //    → XENO brand strip at the very bottom
       var out = document.createElement("canvas");
       out.width = Wp; out.height = Hp;
       var o = out.getContext("2d");
@@ -220,42 +221,113 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
       var bandBottom = dy;
       copy(y1, Math.round((H - remarks.transform[5] + 1.5) * S));
       var tableTop = dy;
+      var BRAND = Math.round(24 * S);
+      if (lFoot.top - BRAND - tableTop < 45 * S) BRAND = 0;   // keep the table roomy first
+      var footTop = lFoot.top - BRAND;
       var filler = document.createElement("canvas");
       filler.width = Wp; filler.height = 1;
       var f = filler.getContext("2d");
       f.drawImage(canvas, 0, lFoot.top - 3, Wp, 1, 0, 0, Wp, 1);
       f.fillStyle = "#fff"; f.fillRect(leftB.right + 1, 0, rightB.left - leftB.right - 1, 1);
-      if (lFoot.top > dy) o.drawImage(filler, 0, 0, Wp, 1, 0, dy, Wp, lFoot.top - dy);
-      o.drawImage(canvas, 0, lFoot.top, Wp, Hp - lFoot.top, 0, lFoot.top, Wp, Hp - lFoot.top);
+      if (footTop > dy) o.drawImage(filler, 0, 0, Wp, 1, 0, dy, Wp, footTop - dy);
+      o.drawImage(canvas, 0, lFoot.top, Wp, Hp - lFoot.top, 0, footTop, Wp, Hp - lFoot.top);
 
-      // 4) XENO where the sideways barcode was
+      // 4) Black column with white XENO (reading top → bottom) where the sideways barcode was
       if (sep) {
-        var colW = rightB.left - sep.right, colH = bandBottom - y0;
-        var size = colW * 0.7;
+        var inset = 1.5 * S;
+        var cx0 = sep.right + 1 + inset, cx1 = rightB.left - inset, cy0 = y0 + inset, cy1 = bandBottom - inset;
+        o.fillStyle = "#000";
+        o.fillRect(cx0, cy0, cx1 - cx0, cy1 - cy0);
+        var colW = cx1 - cx0, colH = cy1 - cy0;
+        var size = colW * 0.72;
         o.save();
-        o.translate((sep.right + rightB.left) / 2, (y0 + bandBottom) / 2);
-        o.rotate(-Math.PI / 2);
-        o.font = "bold " + size + "px Arial";
+        o.translate((cx0 + cx1) / 2, (cy0 + cy1) / 2);
+        o.rotate(Math.PI / 2);
+        o.font = "900 " + size + "px 'Arial Black', Arial, sans-serif";
         var tw = o.measureText("XENO").width;
-        if (tw > colH * 0.85) { size = size * colH * 0.85 / tw; o.font = "bold " + size + "px Arial"; }
-        o.fillStyle = "#000"; o.textAlign = "center"; o.textBaseline = "middle";
+        if (tw > colH * 0.8) { size = size * colH * 0.8 / tw; o.font = "900 " + size + "px 'Arial Black', Arial, sans-serif"; tw = o.measureText("XENO").width; }
+        o.fillStyle = "#fff"; o.textAlign = "center"; o.textBaseline = "middle";
         o.fillText("XENO", 0, 0);
+        o.font = (size * 0.22) + "px Arial";
+        o.fillText("®", -tw / 2 - size * 0.18, -size * 0.32);
         o.restore();
+      }
+
+      // 5) Brand strip: XENO · IT'S NOT CLOTHES. IT'S XENO · ///
+      if (BRAND) {
+        var by = Hp - BRAND;
+        o.fillStyle = "#000";
+        o.fillRect(0, by, Wp, BRAND);
+        o.fillStyle = "#fff"; o.textBaseline = "middle";
+        o.textAlign = "left";
+        o.font = "900 " + (BRAND * 0.5) + "px 'Arial Black', Arial, sans-serif";
+        o.fillText("XENO", 6 * S, by + BRAND / 2);
+        o.textAlign = "center";
+        o.font = (BRAND * 0.17) + "px Arial";
+        if ("letterSpacing" in o) o.letterSpacing = (BRAND * 0.09) + "px";
+        o.fillText("IT'S NOT CLOTHES.", Wp / 2, by + BRAND * 0.36);
+        o.fillText("IT'S XENO", Wp / 2, by + BRAND * 0.66);
+        if ("letterSpacing" in o) o.letterSpacing = "0px";
+        o.fillStyle = "#bbb";
+        for (var k2 = 0; k2 < 3; k2++) {
+          var sx = Wp - 8 * S - (3 - k2) * BRAND * 0.32;
+          o.beginPath();
+          o.moveTo(sx, by + BRAND * 0.72); o.lineTo(sx + BRAND * 0.16, by + BRAND * 0.72);
+          o.lineTo(sx + BRAND * 0.42, by + BRAND * 0.28); o.lineTo(sx + BRAND * 0.26, by + BRAND * 0.28);
+          o.closePath(); o.fill();
+        }
       }
 
       return {
         canvas: out,
-        top: tableTop / S, bottom: (lFoot.top - 2) / S,
+        top: tableTop / S, bottom: (footTop - 2) / S,
         xeno: !!sep,
       };
     }
     var layout = null;
     try { layout = compactLayout(); } catch (e) { console.error(e); layoutNote = "error: " + (e && e.message); layout = null; }
 
+    // XENO logo in the empty top-left corner (left of J&T's COD badge, above "Order No.")
+    function brandHeader(cv) {
+      var orderNo = null, badge = null;
+      text.items.forEach(function (t) {
+        var s = (t.str || "").trim();
+        if (!orderNo && /^order no/i.test(s)) orderNo = t;
+        if (s === "COD" && (!badge || t.height > badge.height)) badge = t;
+      });
+      if (!orderNo || !badge || badge.height < 10) return false;
+      var S = SCALE, c = cv.getContext("2d", { willReadFrequently: true });
+      var x0 = 5 * S, x1 = (badge.transform[4] - 10) * S;
+      var y0 = 4 * S, y1 = (H - orderNo.transform[5] - orderNo.height - 3) * S;
+      if (x1 - x0 < 60 * S || y1 - y0 < 18 * S) return false;
+      // only if that corner is empty
+      var d = c.getImageData(x0, y0, x1 - x0, y1 - y0).data;
+      for (var i = 0; i < d.length; i += 16) if (d[i] < 170) return false;
+      var h = y1 - y0, w = x1 - x0;
+      c.fillStyle = "#000"; c.textAlign = "center"; c.textBaseline = "alphabetic";
+      var size = h * 0.62;
+      c.font = "900 " + size + "px 'Arial Black', Arial, sans-serif";
+      var tw = c.measureText("XENO").width;
+      if (tw > w * 0.82) { size = size * w * 0.82 / tw; c.font = "900 " + size + "px 'Arial Black', Arial, sans-serif"; tw = c.measureText("XENO").width; }
+      var cx = (x0 + x1) / 2, base = y0 + size * 0.86;
+      c.fillText("XENO", cx, base);
+      c.font = (size * 0.2) + "px Arial";
+      c.fillText("®", cx + tw / 2 + size * 0.1, y0 + size * 0.22);
+      c.font = "600 " + (size * 0.17) + "px Arial";
+      if ("letterSpacing" in c) c.letterSpacing = (size * 0.12) + "px";
+      c.fillText("PREMIUM APPAREL", cx, Math.min(y1 - 1, base + size * 0.36));
+      if ("letterSpacing" in c) c.letterSpacing = "0px";
+      c.fillRect(x1 + 1.5 * S, y0, 0.8 * S, h);   // divider before the COD badge
+      return true;
+    }
+    var finalCanvas = layout ? layout.canvas : canvas;
+    var headerLogo = false;
+    try { headerLogo = brandHeader(finalCanvas); } catch (e) { console.error(e); }
+
     var sheet = document.createElement("div");
     sheet.className = "page";
     var img = new Image();
-    img.src = (layout ? layout.canvas : canvas).toDataURL("image/png");
+    img.src = finalCanvas.toDataURL("image/png");
     sheet.appendChild(img);
     document.body.appendChild(sheet);
 
@@ -304,7 +376,7 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
       var table = document.createElement("table");
       table.style.fontSize = fontPt + "pt";
       // No barcode column to hold the company name → put it above the table
-      if (!(layout && layout.xeno)) {
+      if (!(layout && layout.xeno) && !headerLogo) {
         var cap = table.createCaption();
         cap.textContent = "XENO";
         cap.style.fontWeight = "700";
