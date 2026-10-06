@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Printer, Loader2, RefreshCw, Search, CheckCircle2 } from "lucide-react";
+import { Printer, Loader2, RefreshCw, Search, CheckCircle2, Eye } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useToast } from "@/components/ui/Toast";
@@ -64,6 +64,15 @@ export default function PrintPage() {
     return rows.filter((r) =>
       [r.order_number, r.tracking_number, r.customer_name, r.phone].some((v) => v?.includes(q)));
   }, [rows, search]);
+
+  // Already-printed labels only: shows it on screen, nothing is printed or recorded
+  async function previewLabel(row: PrintRow) {
+    try {
+      await printOrderLabel(row.shopify_order_id, { preview: true });
+    } catch (err) {
+      error("فشل المعاينة", err instanceof Error ? err.message : String(err));
+    }
+  }
 
   async function printLabel(row: PrintRow) {
     setPrintingId(row.shopify_order_id);
@@ -149,12 +158,21 @@ export default function PrintPage() {
                     <td><span className="font-mono text-xs font-semibold">{r.tracking_number}</span></td>
                     <td><span className="text-[11px] text-[var(--text-muted)] whitespace-nowrap">{formatDate(r.created_at)}</span></td>
                     <td className="text-center">
+                      <div className="flex items-center justify-center gap-1.5">
+                      {tab === "printed" && (
+                        <Button size="sm" variant="secondary" icon={<Eye size={13} />}
+                          disabled={printingId !== null}
+                          onClick={() => previewLabel(r)}>
+                          معاينة
+                        </Button>
+                      )}
                       <Button size="sm" variant={tab === "pending" ? "primary" : "secondary"}
                         icon={printingId === r.shopify_order_id ? <Loader2 size={13} className="animate-spin" /> : <Printer size={13} />}
                         disabled={printingId !== null}
                         onClick={() => printLabel(r)}>
                         {tab === "pending" ? "طباعة البوليصة" : "إعادة طباعة"}
                       </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}
