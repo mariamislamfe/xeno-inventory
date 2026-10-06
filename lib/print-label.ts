@@ -127,6 +127,53 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
     sheet.appendChild(img);
     document.body.appendChild(sheet);
 
+    // Relabel J&T's English fields: "Cods" → "المبلغ", amount → "900 جنيه", hide the
+    // always-empty "FOD" (not enabled on our account)
+    function coverItem(t) {
+      var c = document.createElement("div");
+      c.className = "cover";
+      c.style.left = (t.transform[4] - 0.5) + "pt";
+      // glyph box: ~0.85×height above the baseline, ~0.2×height below it
+      c.style.top = (H - t.transform[5] - t.height * 0.9) + "pt";
+      c.style.width = (t.width + 1) + "pt";
+      c.style.height = (t.height * 1.12) + "pt";
+      sheet.appendChild(c);
+    }
+    function writeAt(t, str, bold) {
+      var d = document.createElement("div");
+      d.style.position = "absolute";
+      d.style.left = t.transform[4] + "pt";
+      d.style.top = (H - t.transform[5] - t.height * 0.85) + "pt";
+      d.style.fontSize = (t.height * 0.95) + "pt";
+      d.style.lineHeight = "1";
+      d.style.whiteSpace = "nowrap";
+      d.style.color = "#000";
+      if (bold) d.style.fontWeight = "700";
+      d.textContent = str;
+      sheet.appendChild(d);
+    }
+    var cods = null, fod = null;
+    text.items.forEach(function (t) {
+      var s = (t.str || "").trim();
+      if (!cods && /^cods?$/i.test(s)) cods = t;
+      if (!fod && /^fod$/i.test(s)) fod = t;
+    });
+    if (cods) {
+      var amount = null;
+      text.items.forEach(function (t) {
+        if (!amount && t !== cods && /^\\d+(\\.\\d+)?$/.test((t.str || "").trim()) &&
+            Math.abs(t.transform[5] - cods.transform[5]) < 3 && t.transform[4] > cods.transform[4]) amount = t;
+      });
+      coverItem(cods);
+      writeAt(cods, "المبلغ", false);
+      if (amount) {
+        coverItem(amount);
+        var n = parseFloat(amount.str);
+        writeAt(amount, (n % 1 ? n.toFixed(2) : String(n)) + " جنيه", true);
+      }
+    }
+    if (fod) coverItem(fod);
+
     function buildTable(fontPt) {
       var table = document.createElement("table");
       table.style.fontSize = fontPt + "pt";
