@@ -86,6 +86,10 @@ const JT_ERRORS: Record<string, string> = {
   "145003111": "عدد الطرود غير صالح (لازم 1)",
   "145003112": "خدمة التحصيل (COD) مش مفعلة على الحساب",
   "145003113": "طريقة الدفع (payType) مش متوافقة مع الحساب",
+  "145003040": "خطأ داخلي عند J&T — جرّب تاني بعد شوية",
+  "145005000": "خطأ في سيستم J&T — جرّب تاني بعد شوية",
+  "145003050": "بيانات مرفوضة من J&T (Illegal parameters)",
+  "145003100": "رقم البوليصة غير صحيح عند J&T",
 };
 
 export interface JTOrderInput {
@@ -238,11 +242,8 @@ export async function createJTOrder(order: JTOrderInput): Promise<JTOrderResult>
 
 export async function getJTTracking(trackingNumber: string) {
   try {
-    const data = await jtPost("/api/logistics/trace", {
-      customerCode: CUSTOMER_CODE,
-      digest:       bizDigest(),
-      billCode:     trackingNumber,
-    });
+    // Header auth only; up to 30 comma-separated waybills
+    const data = await jtPost("/api/logistics/trace", { billCodes: trackingNumber });
     return { ok: true, data };
   } catch (err) {
     return { ok: false, error: String(err) };
@@ -267,17 +268,18 @@ export async function cancelJTOrder(orderNumber: string) {
 
 // ── Print Waybill ─────────────────────────────────────────────────────────────
 // Printing through the API is what moves the order to "Printed" on the J&T side.
-// Single parcel → base64 PDF (base64EncodeContent); multi-parcel → a PDF URL (urlContent).
-export async function printJTOrder(orderNumber: string, billCode: string): Promise<
+// Returns the waybill PDF as base64 (base64EncodeContent).
+export async function printJTOrder(billCode: string): Promise<
   { ok: true; pdfBase64?: string; url?: string } | { ok: false; error: string }
 > {
-  const txlogisticId = (orderNumber ?? "").replace(/^#/, "").trim();
   try {
     const data = await jtPost("/api/order/printOrder", {
-      customerCode: CUSTOMER_CODE,
-      digest:       bizDigest(),
-      txlogisticId,
+      customerCode:        CUSTOMER_CODE,
+      digest:              bizDigest(),
       billCode,
+      printSize:           0, // one-sided sheet (thermal label)
+      printCod:            1, // show the COD amount for the courier
+      showCustomerOrderId: 1, // barcode of our order number
     }, 30_000);
     const ok = data?.code === "1" || data?.code === 1;
     const pdfBase64 = data?.data?.base64EncodeContent as string | undefined;
