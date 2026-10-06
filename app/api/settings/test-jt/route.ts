@@ -83,7 +83,7 @@ export async function GET() {
       const ok = data?.code === "1" || data?.code === 1;
       let cancelled: boolean | undefined;
       if (ok) {
-        const c = await cancelJTOrder(testOrderNumber);
+        const c = await cancelJTOrder(String(built.biz.txlogisticId));
         cancelled = c.ok && (c.data?.code === "1" || c.data?.code === 1);
       }
       addOrderResult = { data, jtCode: data?.code, jtMsg: data?.msg, ok, customerCodeOk, cancelled };
