@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/client";
 import { printJTOrder } from "@/lib/jt/client";
-import { getLabelItems } from "@/lib/label-items";
+import { getLabelData } from "@/lib/label-items";
 import { toLocal } from "@/lib/phone";
 
 // Printed as the one-line sender on the waybill
@@ -33,12 +33,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "المعاينة متاحة للبوالص المطبوعة بس" }, { status: 409 });
   }
 
-  const [res, items] = await Promise.all([
+  const [res, { items, receiver }] = await Promise.all([
     printJTOrder(ship.tracking_number),
-    getLabelItems(Number(shopify_order_id)),
+    getLabelData(Number(shopify_order_id)),
   ]);
   if (!res.ok) return NextResponse.json({ error: res.error }, { status: 422 });
-  if (preview) return NextResponse.json({ ok: true, pdfBase64: res.pdfBase64, url: res.url, items, sender: senderInfo() });
+  if (preview) return NextResponse.json({ ok: true, pdfBase64: res.pdfBase64, url: res.url, items, receiver, sender: senderInfo() });
 
   await supabaseAdmin
     .from("shipments")
@@ -53,5 +53,5 @@ export async function POST(req: NextRequest) {
     metadata:  { order_number: ship.order_number, tracking_number: ship.tracking_number },
   });
 
-  return NextResponse.json({ ok: true, pdfBase64: res.pdfBase64, url: res.url, items, sender: senderInfo() });
+  return NextResponse.json({ ok: true, pdfBase64: res.pdfBase64, url: res.url, items, receiver, sender: senderInfo() });
 }

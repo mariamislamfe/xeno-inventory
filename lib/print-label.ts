@@ -4,6 +4,7 @@
 
 export interface LabelItem { qty: number; name: string; color: string; size: string; sku: string }
 export interface LabelSender { name: string; phone: string; city: string }
+export interface LabelReceiver { name: string; phone: string; street: string; place: string }
 
 // preview: show the label on screen without printing or recording a print
 export async function printOrderLabel(shopifyOrderId: number, opts: { preview?: boolean } = {}): Promise<void> {
@@ -25,7 +26,7 @@ export async function printOrderLabel(shopifyOrderId: number, opts: { preview?: 
     if (!res.ok || !data.ok) throw new Error(data.error ?? "فشل جلب البوليصة من J&T");
 
     if (data.pdfBase64 && win) {
-      writeLabelPage(win, data.pdfBase64, data.items ?? [], !opts.preview, data.sender ?? null);
+      writeLabelPage(win, data.pdfBase64, data.items ?? [], !opts.preview, data.sender ?? null, data.receiver ?? null);
       return;
     }
     const href = data.pdfBase64 ? base64PdfUrl(data.pdfBase64) : data.url;
@@ -47,14 +48,14 @@ function base64PdfUrl(b64: string) {
 // (between the "REMARKS" title and the footer row). If the box can't be found or
 // the table doesn't fit, the table goes on a second label instead.
 // If pdf.js fails to load, J&T's PDF is shown as-is.
-function writeLabelPage(win: Window, pdfBase64: string, items: LabelItem[], autoPrint: boolean, sender: LabelSender | null) {
+function writeLabelPage(win: Window, pdfBase64: string, items: LabelItem[], autoPrint: boolean, sender: LabelSender | null, receiver: LabelReceiver | null) {
   win.document.open();
-  win.document.write(labelPageHtml(pdfBase64, items, base64PdfUrl(pdfBase64), autoPrint, sender));
+  win.document.write(labelPageHtml(pdfBase64, items, base64PdfUrl(pdfBase64), autoPrint, sender, receiver));
   win.document.close();
 }
 
-export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl: string, autoPrint = true, sender: LabelSender | null = null): string {
-  const payload = JSON.stringify({ pdf: pdfBase64, items, sender }).replace(/</g, "\\u003c");
+export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl: string, autoPrint = true, sender: LabelSender | null = null, receiver: LabelReceiver | null = null): string {
+  const payload = JSON.stringify({ pdf: pdfBase64, items, sender, receiver }).replace(/</g, "\\u003c");
   return `<!doctype html>
 <html lang="ar"><head><meta charset="utf-8"><title>بوليصة الشحن</title>
 <style>
@@ -69,7 +70,8 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
   table { width: 100%; border-collapse: collapse; color: #000; background: #fff; }
   th, td { border: 0.6pt solid #000; padding: 0.6pt 1.5pt; text-align: center; line-height: 1.15; word-break: break-word; }
   th { font-weight: 700; background: #eee; }
-  td.qty, td.sku { font-weight: 700; white-space: nowrap; }
+  td { font-weight: 700; }
+  td.qty, td.sku { white-space: nowrap; }
   .more { font-size: 7pt; font-weight: 700; text-align: center; padding-top: 2pt; }
   @media screen {
     body { background: #e5e7eb; padding: 16px 0; }
@@ -264,12 +266,40 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
         });
         ctx.fillStyle = "#fff";
         ctx.fillRect(inL, toBox.top, inR - inL, toBox.bottom - toBox.top);
-        var gap = 8 * S;
-        pieces.forEach(function (pc) {
-          var total = pc.segs.reduce(function (a, sg) { return a + sg.cv.width; }, 0) + gap * (pc.segs.length - 1);
-          var x = Math.max(inL, mid - total / 2);
-          pc.segs.forEach(function (sg) { ctx.drawImage(sg.cv, x, pc.top); x += sg.cv.width + gap; });
-        });
+        // Draw a centred line of parts in a regular (light) weight
+        function centredLine(parts2, fsz, baseY) {
+          var spc = fsz * 1.2;
+          ctx.font = "400 " + fsz + "px Arial";
+          ctx.direction = "ltr";
+          var ws = parts2.map(function (p) { return ctx.measureText(p).width; });
+          var total2 = ws.reduce(function (a, w) { return a + w; }, 0) + spc * (parts2.length - 1);
+          var maxW = inR - inL - 6 * S;
+          if (total2 > maxW) {   // shrink long addresses to fit the width
+            fsz = fsz * maxW / total2; ctx.font = "400 " + fsz + "px Arial";
+            spc = fsz * 1.2;
+            ws = parts2.map(function (p) { return ctx.measureText(p).width; });
+            total2 = ws.reduce(function (a, w) { return a + w; }, 0) + spc * (parts2.length - 1);
+          }
+          var xs = mid - total2 / 2;
+          ctx.fillStyle = "#000"; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+          parts2.forEach(function (p, i) { ctx.fillText(p, xs, baseY); xs += ws[i] + spc; });
+        }
+        var rcv = data.receiver;
+        if (rcv && rcv.name && pieces.length) {
+          // Our own text (from the order, mapped like the shipment) so it can be light
+          var fsR = toItem.height * S * 1.05, lh = fsR * 1.45;
+          var by0 = Math.max(toBox.top + fsR * 1.15, pieces[0].top + fsR);
+          centredLine(["To:", rcv.name, rcv.phone].filter(function (p) { return p; }), fsR, by0);
+          if (rcv.street) centredLine([rcv.street], fsR, by0 + lh);
+          if (rcv.place) centredLine([rcv.place], fsR, by0 + lh * (rcv.street ? 2 : 1));
+        } else {
+          var gap = 8 * S;
+          pieces.forEach(function (pc) {
+            var total = pc.segs.reduce(function (a, sg) { return a + sg.cv.width; }, 0) + gap * (pc.segs.length - 1);
+            var x = Math.max(inL, mid - total / 2);
+            pc.segs.forEach(function (sg) { ctx.drawImage(sg.cv, x, pc.top); x += sg.cv.width + gap; });
+          });
+        }
 
         // Sender → one line drawn by us (keeps J&T's FROM line if we have no sender data)
         var snd = data.sender;
@@ -277,16 +307,7 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
         ctx.fillStyle = "#fff";
         ctx.fillRect(inL, fromBox.top, inR - inL, fromBox.bottom - fromBox.top);
         var fs = fromItem.height * S * 1.1;
-        var parts = ["FROM: " + snd.name, snd.phone, snd.city].filter(function (p) { return p; });
-        ctx.font = "700 " + fs + "px Arial";
-        ctx.direction = "ltr";
-        var sp = fs * 1.4;
-        var widths = parts.map(function (p) { return ctx.measureText(p).width; });
-        var tot = widths.reduce(function (a, w) { return a + w; }, 0) + sp * (parts.length - 1);
-        var xx2 = mid - tot / 2;
-        ctx.fillStyle = "#000"; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
-        var by2 = fromBox.top + fs * 1.25;
-        parts.forEach(function (p, i) { ctx.fillText(p, xx2, by2); xx2 += widths[i] + sp; });
+        centredLine(["FROM: " + snd.name, snd.phone, snd.city].filter(function (p) { return p; }), fs, fromBox.top + fs * 1.25);
       }
 
       // 2) Find empty rows in the band (ignoring the vertical borders) and cut the gaps
@@ -522,7 +543,7 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
         d2.style.lineHeight = "1";
         d2.style.textAlign = "center";
         d2.style.whiteSpace = "nowrap";
-        d2.style.fontWeight = "700";
+        d2.style.fontWeight = "900";
         d2.style.color = "#000";
         d2.textContent = (n % 1 ? n.toFixed(2) : String(n)) + " L.E";
         sheet.appendChild(d2);
