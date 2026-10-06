@@ -74,7 +74,8 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
     body { background: #e5e7eb; padding: 16px 0; }
     .page { margin: 0 auto 16px; background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.15); }
   }
-  @media print { #status { display: none; } }
+  .note { font: 11px monospace; color: #666; text-align: center; direction: ltr; padding: 4px 16px; }
+  @media print { #status, .note { display: none; } }
 </style></head>
 <body><div id="status">جارٍ تجهيز البوليصة...</div>
 <script id="data" type="application/json">${payload}</script>
@@ -131,8 +132,10 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
     // on top), write XENO in its place, squeeze the empty gaps in the address section,
     // and give the freed height to the REMARKS box. Works on the rendered pixels; any
     // surprise in the layout returns null and the label is used as J&T made it.
+    var layoutNote = "";
+    function fail(reason) { layoutNote = reason; return null; }
     function compactLayout() {
-      if (!cods || !remarks || !footer) return null;
+      if (!cods || !remarks || !footer) return fail("text: cods=" + !!cods + " remarks=" + !!remarks + " footer=" + !!footer);
       var ctx = canvas.getContext("2d", { willReadFrequently: true });
       var Wp = canvas.width, Hp = canvas.height, S = SCALE;
       var px = ctx.getImageData(0, 0, Wp, Hp).data;
@@ -152,11 +155,13 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
       var lCods = lineBelow((H - cods.transform[5]) * S);
       var lRem  = lineAbove((H - remarks.transform[5] - remarks.height) * S);
       var lFoot = lineAbove((H - footer.transform[5] - footer.height) * S);
-      if (!lCods || !lRem || !lFoot || !(lCods.bottom < lRem.top && lRem.bottom < lFoot.top)) return null;
+      if (!lCods || !lRem || !lFoot || !(lCods.bottom < lRem.top && lRem.bottom < lFoot.top)) {
+        return fail("lines: n=" + lines.length + " cods=" + (lCods && lCods.top) + " rem=" + (lRem && lRem.top) + " foot=" + (lFoot && lFoot.top));
+      }
 
       // The address band sits between the Cods row and REMARKS
       var y0 = lCods.bottom + 1, y1 = lRem.top, bandH = y1 - y0;
-      if (bandH < 20 * S) return null;
+      if (bandH < 20 * S) return fail("band too small: " + bandH);
       var vruns = [], vr = null;
       for (var x2 = 0; x2 < Wp; x2++) {
         var d = 0;
@@ -165,11 +170,13 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
         else if (vr) { vruns.push(vr); vr = null; }
       }
       if (vr) vruns.push(vr);
-      if (vruns.length < 2) return null;
-      var leftB = vruns[0], rightB = vruns[vruns.length - 1];
-      if (leftB.left > Wp * 0.1 || rightB.right < Wp * 0.9) return null;
+      // J&T's label has no outer vertical borders — use the page edges then
+      var leftB = vruns.length && vruns[0].right < Wp * 0.1 ? vruns[0] : { left: -1, right: -1 };
+      var lastV = vruns[vruns.length - 1];
+      var rightB = lastV && lastV.left > Wp * 0.9 ? lastV : { left: Wp, right: Wp };
       var sep = null;
       vruns.forEach(function (v) { if (!sep && v.left > Wp * 0.55 && v.right < rightB.left - S) sep = v; });
+      if (!sep) layoutNote = "no barcode column: v=" + vruns.map(function (v) { return v.left; }).join(",") + " W=" + Wp;
 
       // 1) Blank the sideways barcode column
       if (sep) {
@@ -243,7 +250,7 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
       };
     }
     var layout = null;
-    try { layout = compactLayout(); } catch (e) { console.error(e); layout = null; }
+    try { layout = compactLayout(); } catch (e) { console.error(e); layoutNote = "error: " + (e && e.message); layout = null; }
 
     var sheet = document.createElement("div");
     sheet.className = "page";
@@ -361,6 +368,13 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
     }
 
     document.getElementById("status").remove();
+    // Preview only: say why the compact layout wasn't used (screen, never printed)
+    if (${!autoPrint} && layoutNote) {
+      var note = document.createElement("div");
+      note.className = "note";
+      note.textContent = "layout: " + layoutNote;
+      document.body.appendChild(note);
+    }
     await new Promise(function (r) { if (img.complete) r(); else img.onload = r; });
     ${autoPrint ? 'setTimeout(function () { window.print(); }, 200);' : 'document.title = "معاينة البوليصة";'}
   } catch (e) {
