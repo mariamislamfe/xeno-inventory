@@ -178,11 +178,21 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
       vruns.forEach(function (v) { if (!sep && v.left > Wp * 0.55 && v.right < rightB.left - S) sep = v; });
       if (!sep) layoutNote = "no barcode column: v=" + vruns.map(function (v) { return v.left; }).join(",") + " W=" + Wp;
 
-      // 1) Blank the sideways barcode column
+      // 1) Drop the sideways barcode column and its divider, and run the section lines
+      //    (under the sorting code / receiver) across the full width
       if (sep) {
+        var lineRows = [];
+        for (var yl = y0; yl < y1; yl++) {
+          var dk = 0, n = 0;
+          for (var xl = leftB.right + 2; xl < sep.left - 1; xl += 2) { n++; if (lum(xl, yl) < 128) dk++; }
+          if (n && dk / n > 0.9) lineRows.push(yl);
+        }
         ctx.fillStyle = "#fff";
-        ctx.fillRect(sep.right + 1, y0, rightB.left - sep.right - 1, bandH);
+        ctx.fillRect(sep.left, y0, rightB.left - sep.left, bandH);
+        ctx.fillStyle = "#000";
+        lineRows.forEach(function (yl2) { ctx.fillRect(sep.left, yl2, rightB.left - sep.left, 1); });
         px = ctx.getImageData(0, 0, Wp, Hp).data;
+        vruns = vruns.filter(function (v) { return v !== sep; });
       }
 
       // 2) Find empty rows in the band (ignoring the vertical borders) and cut the gaps
@@ -236,27 +246,6 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
       f.fillStyle = "#fff"; f.fillRect(leftB.right + 1, 0, rightB.left - leftB.right - 1, 1);
       if (footTop > dy) o.drawImage(filler, 0, 0, Wp, 1, 0, dy, Wp, footTop - dy);
 
-      // 4) Black column with white XENO (reading top → bottom) where the sideways barcode was
-      if (sep) {
-        var inset = 1.5 * S;
-        var cx0 = sep.right + 1 + inset, cx1 = rightB.left - inset, cy0 = y0 + inset, cy1 = bandBottom - inset;
-        o.fillStyle = "#000";
-        o.fillRect(cx0, cy0, cx1 - cx0, cy1 - cy0);
-        var colW = cx1 - cx0, colH = cy1 - cy0;
-        var size = colW * 0.6;
-        o.save();
-        o.translate((cx0 + cx1) / 2, (cy0 + cy1) / 2);
-        o.rotate(Math.PI / 2);
-        o.font = "900 " + size + "px 'Arial Black', Arial, sans-serif";
-        var tw = o.measureText("XENO").width;
-        if (tw > colH * 0.62) { size = size * colH * 0.62 / tw; o.font = "900 " + size + "px 'Arial Black', Arial, sans-serif"; tw = o.measureText("XENO").width; }
-        o.fillStyle = "#fff"; o.textAlign = "center"; o.textBaseline = "middle";
-        o.fillText("XENO", 0, 0);
-        o.font = (size * 0.22) + "px Arial";
-        o.fillText("®", -tw / 2 - size * 0.18, -size * 0.32);
-        o.restore();
-      }
-
       // 5) Brand strip: XENO · ☎ hotline · print date · ///
       var by = Hp - BRAND;
       o.fillStyle = "#000";
@@ -289,37 +278,71 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
       return {
         canvas: out,
         top: tableTop / S, bottom: (footTop - 2) / S,
-        xeno: !!sep,
       };
     }
     var layout = null;
     try { layout = compactLayout(); } catch (e) { console.error(e); layoutNote = "error: " + (e && e.message); layout = null; }
 
-    // XENO logo in the empty top-left corner (left of J&T's COD badge, above "Order No.")
+    // Header per the mockup: corner stripe + XENO logo in the empty top-left area,
+    // J&T's grey COD badge turned black, a rule under "Order No.". Found from pixels,
+    // since the badge is drawn as an image rather than text.
+    var headerNote = "";
     function brandHeader(cv) {
-      var orderNo = null, badge = null;
-      text.items.forEach(function (t) {
-        var s = (t.str || "").trim();
-        if (!orderNo && /^order no/i.test(s)) orderNo = t;
-        if (s === "COD" && (!badge || t.height > badge.height)) badge = t;
-      });
-      if (!orderNo || !badge || badge.height < 10) return false;
       var S = SCALE, c = cv.getContext("2d", { willReadFrequently: true });
-      var x0 = 3 * S, x1 = (badge.transform[4] - 10) * S;
-      var y0 = 4 * S, y1 = (H - orderNo.transform[5] - orderNo.height - 3) * S;
-      if (x1 - x0 < 60 * S || y1 - y0 < 18 * S) return false;
-      // only if that corner is empty
-      var d = c.getImageData(x0, y0, x1 - x0, y1 - y0).data;
-      for (var i = 0; i < d.length; i += 16) if (d[i] < 170) return false;
-      // Diagonal corner stripe, then the logo to its right
+      var Wp = cv.width;
+      var orderNo = null;
+      text.items.forEach(function (t) { if (!orderNo && /^order no/i.test((t.str || "").trim())) orderNo = t; });
+      // Bottom of the header area: just above "Order No." (or the top 9% of the page)
+      var y1 = Math.round(orderNo ? (H - orderNo.transform[5] - orderNo.height - 2.5) * S : H * 0.09 * S);
+      var y0 = Math.round(3 * S);
+      if (y1 - y0 < 18 * S) { headerNote = "header too short: " + (y1 - y0); return false; }
+      var hh = y1 - y0;
+      var d = c.getImageData(0, y0, Wp, hh).data;
+      function L(x, y) { var i = (y * Wp + x) * 4; return (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000; }
+
+      // Leftmost ink in the header area = where J&T's own content (badge) starts
+      var inkLeft = Wp;
+      for (var y = 0; y < hh; y += 2) for (var x = Math.round(3 * S); x < inkLeft; x++) if (L(x, y) < 170) { inkLeft = x; break; }
+      var x1 = inkLeft - 9 * S;
+      if (x1 < 90 * S) { headerNote = "no empty corner: inkLeft=" + Math.round(inkLeft / S) + "pt"; return false; }
+
+      // Grey badge → black (white lettering stays white)
+      var colCount = [], gL = -1, gR = -1;
+      for (var x2 = inkLeft; x2 < Wp; x2++) {
+        var g = 0;
+        for (var y2 = 0; y2 < hh; y2++) { var l = L(x2, y2); if (l > 50 && l < 215) g++; }
+        colCount.push(g);
+        if (g > hh * 0.35) { if (gL < 0) gL = x2; gR = x2; } else if (gL >= 0 && x2 - gR > 4 * S) break;
+      }
+      if (gL >= 0 && gR - gL > 15 * S) {
+        var gT = -1, gB = -1;
+        for (var y3 = 0; y3 < hh; y3++) {
+          var g2 = 0;
+          for (var x3 = gL; x3 <= gR; x3++) { var l2 = L(x3, y3); if (l2 > 50 && l2 < 215) g2++; }
+          if (g2 > (gR - gL) * 0.35) { if (gT < 0) gT = y3; gB = y3; }
+        }
+        if (gT >= 0) {
+          // include the badge's anti-aliased edge rows/columns
+          gL = Math.max(0, gL - 2); gR = Math.min(Wp - 1, gR + 2); gT = Math.max(0, gT - 2); gB = Math.min(hh - 1, gB + 2);
+          var bw = gR - gL + 1, bh = gB - gT + 1;
+          var img2 = c.getImageData(gL, y0 + gT, bw, bh);
+          for (var k = 0; k < img2.data.length; k += 4) {
+            var lk = (img2.data[k] * 299 + img2.data[k + 1] * 587 + img2.data[k + 2] * 114) / 1000;
+            var v = lk > 225 ? 255 : 0;
+            img2.data[k] = img2.data[k + 1] = img2.data[k + 2] = v;
+          }
+          c.putImageData(img2, gL, y0 + gT);
+        }
+      }
+
+      // Corner stripe + logo + divider
       c.fillStyle = "#000";
       c.beginPath();
       c.moveTo(0, 13 * S); c.lineTo(13 * S, 0); c.lineTo(18 * S, 0); c.lineTo(0, 18 * S);
       c.closePath(); c.fill();
-      x0 = 20 * S;
-      var h = y1 - y0, w = x1 - x0;
+      var x0 = 20 * S, w = x1 - x0;
       c.textAlign = "center"; c.textBaseline = "alphabetic";
-      var size = h * 0.62;
+      var size = hh * 0.62;
       c.font = "900 " + size + "px 'Arial Black', Arial, sans-serif";
       var tw = c.measureText("XENO").width;
       if (tw > w * 0.82) { size = size * w * 0.82 / tw; c.font = "900 " + size + "px 'Arial Black', Arial, sans-serif"; tw = c.measureText("XENO").width; }
@@ -331,33 +354,15 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
       if ("letterSpacing" in c) c.letterSpacing = (size * 0.12) + "px";
       c.fillText("PREMIUM APPAREL", cx, Math.min(y1 - 1, base + size * 0.36));
       if ("letterSpacing" in c) c.letterSpacing = "0px";
-      c.fillRect(x1 + 1.5 * S, y0, 0.8 * S, h);   // divider before the COD badge
-
-      // J&T's grey COD badge → black with white text
-      var bx = Math.round((badge.transform[4] - 1) * S), byc = Math.round((H - badge.transform[5] - badge.height * 0.4) * S);
-      function lumAt(x, y) { var p = c.getImageData(x, y, 1, 1).data; return (p[0] * 299 + p[1] * 587 + p[2] * 114) / 1000; }
-      var g = lumAt(bx, byc);
-      if (g > 40 && g < 220) {
-        var L = bx, R = Math.round((badge.transform[4] + badge.width + 1) * S), T = byc, B = byc;
-        while (L > 0 && lumAt(L - 1, byc) < 235) L--;
-        while (R < cv.width - 1 && lumAt(R + 1, byc) < 235) R++;
-        while (T > 0 && lumAt(bx, T - 1) < 235) T--;
-        while (B < cv.height - 1 && lumAt(bx, B + 1) < 235) B++;
-        if (R - L > badge.width * S && B - T > badge.height * 0.8 * S && R - L < 120 * S && B - T < 60 * S) {
-          c.fillStyle = "#000";
-          c.fillRect(L, T, R - L + 1, B - T + 1);
-          c.fillStyle = "#fff"; c.textAlign = "center"; c.textBaseline = "middle";
-          c.font = "900 " + ((B - T) * 0.62) + "px 'Arial Black', Arial, sans-serif";
-          c.fillText("COD", (L + R) / 2, (T + B) / 2 + (B - T) * 0.03);
-        }
-      }
+      c.fillRect(x1 + 3 * S, y0, 0.8 * S, hh);
 
       // Thin rule under "Order No." when there's a clear gap above the barcode
-      var ry = Math.round((H - orderNo.transform[5] + 2.5) * S);
-      var clear = true;
-      var rd = c.getImageData(3 * S, ry - S, cv.width - 6 * S, 2 * S).data;
-      for (var j = 0; j < rd.length; j += 16) if (rd[j] < 170) { clear = false; break; }
-      if (clear) { c.fillStyle = "#000"; c.fillRect(3 * S, ry, cv.width - 6 * S, 0.8 * S); }
+      if (orderNo) {
+        var ry = Math.round((H - orderNo.transform[5] + 2.5) * S);
+        var rd = c.getImageData(3 * S, ry - S, Wp - 6 * S, 2 * S).data, clear = true;
+        for (var j = 0; j < rd.length; j += 16) if (rd[j] < 170) { clear = false; break; }
+        if (clear) c.fillRect(3 * S, ry, Wp - 6 * S, 0.8 * S);
+      }
       return true;
     }
     var finalCanvas = layout ? layout.canvas : canvas;
@@ -416,7 +421,7 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
       var table = document.createElement("table");
       table.style.fontSize = fontPt + "pt";
       // No barcode column to hold the company name → put it above the table
-      if (!(layout && layout.xeno) && !headerLogo) {
+      if (!headerLogo) {
         var cap = table.createCaption();
         cap.textContent = "XENO";
         cap.style.fontWeight = "700";
@@ -481,6 +486,7 @@ export function labelPageHtml(pdfBase64: string, items: LabelItem[], fallbackUrl
 
     document.getElementById("status").remove();
     // Preview only: say why the compact layout wasn't used (screen, never printed)
+    if (headerNote) layoutNote = (layoutNote ? layoutNote + " | " : "") + headerNote;
     if (${!autoPrint} && layoutNote) {
       var note = document.createElement("div");
       note.className = "note";
