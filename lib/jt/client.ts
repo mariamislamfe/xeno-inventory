@@ -107,26 +107,6 @@ export function itemsDetail(items: JTItem[]): string {
   }).join("; ");
 }
 
-// J&T prints our customer order number (txlogisticId) at the top of the waybill as
-// "Order No.", so lead with the SKUs: "NK2x2_SH5-53902". It must stay unique per
-// shipment, hence the order number at the end. Kept to plain ASCII, ≤ 50 chars.
-export function makeTxlogisticId(items: JTItem[], orderNumber: string): string {
-  const num  = (orderNumber ?? "").replace(/^#/, "").trim();
-  const skus = items
-    .map((i) => {
-      const sku = (i.sku ?? "").replace(/[^A-Za-z0-9]/g, "");
-      return sku ? `${sku}${i.qty > 1 ? `x${i.qty}` : ""}` : "";
-    })
-    .filter(Boolean);
-  let prefix = "";
-  for (const s of skus) {
-    const next = prefix ? `${prefix}_${s}` : s;
-    if (next.length + num.length + 1 > 50) break;
-    prefix = next;
-  }
-  return prefix && num ? `${prefix}-${num}` : num;
-}
-
 export interface JTOrderInput {
   orderNumber:  string;
   customerName: string;
@@ -155,7 +135,8 @@ export interface JTOrderResult {
  * collect goes in itemsValue — and totalQuantity must be the number 1.
  */
 export function buildAddOrderBiz(order: JTOrderInput): { ok: true; biz: Record<string, unknown>; areaGuessed: boolean } | { ok: false; error: string } {
-  const txlogisticId = makeTxlogisticId(order.items, order.orderNumber);
+  // Shopify order names include "#" prefix (e.g. "#1001") — strip it for J&T
+  const txlogisticId = (order.orderNumber ?? "").replace(/^#/, "").trim();
   if (!txlogisticId) {
     return { ok: false, error: `رقم الطلب فارغ أو غير صالح: "${order.orderNumber}"` };
   }
@@ -187,8 +168,8 @@ export function buildAddOrderBiz(order: JTOrderInput): { ok: true; biz: Record<s
   const skuText   = skuSummary(order.items) || "منتجات";
   const itemsText = itemsDetail(order.items) || "منتجات";
   const pieces    = order.items.reduce((n, i) => n + i.qty, 0);
-  // SKUs are already on top (Order No.) — remarks carry the details
-  const remark    = [`${pieces} قطعة: ${itemsText}`, order.note?.trim()].filter(Boolean).join(" | ");
+  // Our print page draws an items table over this box; the text stays as a fallback
+  const remark    = [skuText, `${pieces} قطعة: ${itemsText}`, order.note?.trim()].filter(Boolean).join(" | ");
   const street    = (order.address || receiverAddr.area).slice(0, 200);
 
   const biz = {
@@ -291,7 +272,7 @@ export async function getJTTracking(trackingNumber: string) {
 
 // ── Cancel Order ──────────────────────────────────────────────────────────────
 
-// txlogisticId as sent to addOrder (see makeTxlogisticId)
+// txlogisticId as sent to addOrder (the order number without "#")
 export async function cancelJTOrder(txlogisticId: string) {
   try {
     const data = await jtPost("/api/order/cancelOrder", {
@@ -318,7 +299,7 @@ export async function printJTOrder(billCode: string): Promise<
       billCode,
       printSize:           0, // one-sided sheet (thermal label)
       printCod:            1, // show the COD amount for the courier
-      showCustomerOrderId: 0, // no order-number barcode — the SKU summary is shown instead
+      showCustomerOrderId: 0,
     }, 30_000);
     const ok = data?.code === "1" || data?.code === 1;
     const pdfBase64 = data?.data?.base64EncodeContent as string | undefined;
