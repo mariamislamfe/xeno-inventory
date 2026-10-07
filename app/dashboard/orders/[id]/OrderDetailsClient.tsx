@@ -563,7 +563,7 @@ export function OrderDetailsClient({ order: initialOrder }: OrderDetailsClientPr
   const { error: toastError } = useToast();
 
   // "مكتمل" = confirmed (tag), still waiting to be shipped
-  const open      = order.status === "pending" || order.status === "processing";
+  const open      = order.status !== "cancelled";   // editable unless cancelled in Shopify itself
   const confirmed = order.tags.some((t) => t.toLowerCase() === "confirmed");
   const waiting   = order.tags.some((t) => t.toLowerCase() === "waiting");
   const cancelTag = order.tags.some((t) => ["cancelled", "ملغي"].includes(t.toLowerCase()));
@@ -573,7 +573,7 @@ export function OrderDetailsClient({ order: initialOrder }: OrderDetailsClientPr
     : STATUS_DISPLAY[order.status] ?? { label: order.status, variant: "neutral" as const };
   const pm = PAYMENT_DISPLAY[order.paymentStatus] ?? { label: order.paymentStatus, variant: "neutral" as const };
 
-  const canShip = !order.trackingNumber && order.status !== "cancelled" && order.status !== "delivered" && !cancelTag;
+  const canShip = !order.trackingNumber && order.status !== "cancelled" && !cancelTag;
 
   return (
     <div className="space-y-5">
