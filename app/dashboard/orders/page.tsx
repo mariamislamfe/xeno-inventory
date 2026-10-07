@@ -356,16 +356,14 @@ function isWaiting(o: XenoOrder) {
 function isCancelTagged(o: XenoOrder) {
   return o.tags.some((t) => ["cancelled", "ملغي"].includes(t.toLowerCase()));
 }
+// Every order except one cancelled in Shopify itself can change status
+function isEditable(o: XenoOrder) {
+  return o.status !== "cancelled";
+}
 function statusDisplay(o: XenoOrder) {
-  if ((o.status === "pending" || o.status === "processing") && isCancelTagged(o)) {
-    return { label: "ملغي", variant: "danger" as const };
-  }
-  if ((o.status === "pending" || o.status === "processing") && isConfirmed(o)) {
-    return { label: "مكتمل", variant: "success" as const };
-  }
-  if ((o.status === "pending" || o.status === "processing") && isWaiting(o)) {
-    return { label: "انتظار", variant: "info" as const };
-  }
+  if (isEditable(o) && isCancelTagged(o)) return { label: "ملغي",   variant: "danger" as const };
+  if (isEditable(o) && isConfirmed(o))    return { label: "مكتمل",  variant: "success" as const };
+  if (isEditable(o) && isWaiting(o))      return { label: "انتظار", variant: "info" as const };
   return STATUS_DISPLAY[o.status] ?? { label: o.status, variant: "neutral" as const };
 }
 
@@ -384,8 +382,10 @@ const ACTION_LABELS: Record<OrderAction, { button: string; done: (n: number) => 
 };
 
 // Orders that can still be sent to J&T
+// Shopify's own "fulfilled" flag doesn't block anything here: we ship with J&T and
+// track that ourselves. Only a J&T tracking number or a cancel does.
 function canShip(o: XenoOrder) {
-  return !o.trackingNumber && o.status !== "delivered" && o.status !== "cancelled" && !isCancelTagged(o);
+  return !o.trackingNumber && o.status !== "cancelled" && !isCancelTagged(o);
 }
 
 // Returns the tracking number for "ship"
@@ -1061,7 +1061,7 @@ export default function OrdersPage() {
                           </span>
                         </td>
                         <td>
-                          {order.status === "pending" || order.status === "processing" ? (
+                          {isEditable(order) ? (
                             <div className="relative inline-block">
                               <button
                                 onClick={() => setStatusMenuId(statusMenuId === order.id ? null : order.id)}
