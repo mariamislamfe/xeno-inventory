@@ -339,7 +339,7 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
 const STATUS_DISPLAY: Record<string, { label: string; variant: "success" | "warning" | "danger" | "info" | "neutral" }> = {
   pending:    { label: "جديد",    variant: "warning" },
   processing: { label: "معالجة", variant: "info"    },
-  delivered:  { label: "تم التسليم", variant: "info" },
+  delivered:  { label: "مكتمل",  variant: "success" },   // fulfilled in Shopify itself
   cancelled:  { label: "ملغي",   variant: "danger"  },
   returned:   { label: "مرتجع",  variant: "neutral" },
 };
@@ -480,7 +480,7 @@ const VROBO_TAGS = [
 ];
 
 // ── Filter tabs ────────────────────────────────────────────────────────
-type TabKey = "any" | "cancelled" | "fulfilled" | "unfulfilled" | "waiting" | "confirmed" | "postponed";
+type TabKey = "any" | "cancelled" | "unfulfilled" | "waiting" | "confirmed" | "postponed";
 
 const TABS: { key: TabKey; label: string; shopifyParam: Record<string, string> }[] = [
   { key: "any",         label: "الكل",        shopifyParam: { status: "any" } },
@@ -488,7 +488,6 @@ const TABS: { key: TabKey; label: string; shopifyParam: Record<string, string> }
   { key: "waiting",     label: "⏳ انتظار",   shopifyParam: { status: "open",   tag: "waiting" } },
   { key: "confirmed",   label: "✅ مكتملة",   shopifyParam: { status: "open",   tag: "confirmed" } },
   { key: "cancelled",   label: "ملغية",       shopifyParam: { status: "cancelled" } },
-  { key: "fulfilled",   label: "تم التسليم",  shopifyParam: { status: "closed", fulfillment_status: "fulfilled" } },
   { key: "postponed",   label: "⏰ مؤجلة",    shopifyParam: { status: "any",    tag: "postponed" } },
 ];
 
@@ -677,13 +676,9 @@ export default function OrdersPage() {
       if (data.error) throw new Error(data.error);
 
       // Shopify can't exclude these in the query, so drop them here:
-      // "جديدة" = not confirmed / waiting yet; "تم التسليم" = fulfilled orders that weren't cancelled later
+      // "جديدة" = not confirmed / waiting yet
       const list = data.orders as XenoOrder[];
-      setOrders(
-        tab === "unfulfilled" ? list.filter((o) => !isConfirmed(o) && !isWaiting(o))
-        : tab === "fulfilled" ? list.filter((o) => o.status !== "cancelled")
-        : list,
-      );
+      setOrders(tab === "unfulfilled" ? list.filter((o) => !isConfirmed(o) && !isWaiting(o)) : list);
       setSelectedIds(new Set()); // selection is per loaded page
       setHasMore(data.has_more ?? false);
       setCurrentPage(page);

@@ -48,7 +48,7 @@ function tagStyle(t: string) {
 const STATUS_DISPLAY: Record<string, { label: string; variant: "success" | "warning" | "danger" | "info" | "neutral" }> = {
   pending:    { label: "جديد",     variant: "warning" },
   processing: { label: "معالجة",  variant: "info"    },
-  delivered:  { label: "تم التسليم", variant: "info" },
+  delivered:  { label: "مكتمل",   variant: "success" },   // fulfilled in Shopify itself
   cancelled:  { label: "ملغي",    variant: "danger"  },
   returned:   { label: "مرتجع",   variant: "neutral" },
 };
