@@ -492,9 +492,11 @@ export function OrderDetailsClient({ order: initialOrder }: OrderDetailsClientPr
   const { error: toastError } = useToast();
 
   // "مكتمل" = confirmed (tag), still waiting to be shipped
+  const open      = order.status === "pending" || order.status === "processing";
   const confirmed = order.tags.some((t) => t.toLowerCase() === "confirmed");
-  const st = (order.status === "pending" || order.status === "processing") && confirmed
-    ? { label: "مكتمل", variant: "success" as const }
+  const waiting   = order.tags.some((t) => t.toLowerCase() === "waiting");
+  const st = open && confirmed ? { label: "مكتمل", variant: "success" as const }
+    : open && waiting ? { label: "انتظار", variant: "info" as const }
     : STATUS_DISPLAY[order.status] ?? { label: order.status, variant: "neutral" as const };
   const pm = PAYMENT_DISPLAY[order.paymentStatus] ?? { label: order.paymentStatus, variant: "neutral" as const };
 

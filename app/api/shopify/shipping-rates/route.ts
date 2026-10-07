@@ -16,12 +16,17 @@ function priceFromZoneName(name: string): number {
 interface ShopifyProvince  { code: string; name: string }
 interface ShopifyCountry   { code: string; provinces: ShopifyProvince[] }
 interface ShopifyPriceRate { name: string; price: string; min_order_subtotal: string | null; max_order_subtotal: string | null }
+interface ShopifyWeightRate { name: string; price: string; weight_low: number; weight_high: number }
 interface ShopifyZone {
   id: number;
   name: string;
   countries: ShopifyCountry[];
   price_based_shipping_rates: ShopifyPriceRate[];
+  weight_based_shipping_rates?: ShopifyWeightRate[];
 }
+
+// "Kafr el-Sheikh" / "Kafr El Sheikh" / "kafrelsheikh" → same key
+const provKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 export const revalidate = 300;
 
@@ -66,7 +71,7 @@ export async function GET(req: NextRequest) {
       }
 
       const hit = egypt.provinces.some(
-        (p) => p.name.toLowerCase() === province.toLowerCase()
+        (p) => provKey(p.name) === provKey(province) || p.code.toLowerCase() === province.toLowerCase()
       );
       if (hit) { matchedZone = zone; break; }
     }
@@ -78,14 +83,22 @@ export async function GET(req: NextRequest) {
     let ratePrice = 0;
     let rateTitle = DEFAULT_TITLE;
 
+    const weightRates = bestZone.weight_based_shipping_rates ?? [];
     if (rates.length > 0) {
-      let match: ShopifyPriceRate | null = null;
-      for (const r of rates) {
+      // Like checkout: of the rates this order total qualifies for (e.g. a free
+      // shipping rate above some amount), the cheapest one
+      const fits = rates.filter((r) => {
         const min = r.min_order_subtotal != null ? parseFloat(r.min_order_subtotal) : 0;
         const max = r.max_order_subtotal != null ? parseFloat(r.max_order_subtotal) : Infinity;
-        if (orderTotal >= min && orderTotal <= max) { match = r; break; }
-      }
-      if (!match) match = rates[0];
+        return orderTotal >= min && orderTotal <= max;
+      });
+      const pool  = fits.length ? fits : rates;
+      const match = pool.reduce((a, b) => (parseFloat(b.price) < parseFloat(a.price) ? b : a));
+      ratePrice = parseFloat(match.price);
+      rateTitle = match.name;
+    } else if (weightRates.length > 0) {
+      // Weight isn't known here — use the lightest bracket (a normal single parcel)
+      const match = weightRates.reduce((a, b) => (b.weight_low < a.weight_low ? b : a));
       ratePrice = parseFloat(match.price);
       rateTitle = match.name;
     } else {
@@ -99,7 +112,7 @@ export async function GET(req: NextRequest) {
       ratePrice = DEFAULT_COST;
     }
 
-    console.log(`[shipping-rates] province="${province}" zone="${bestZone.name}" rate=${ratePrice}`);
+    console.log(`[shipping-rates] province="${province}" zone="${bestZone.name}" matched=${!!matchedZone} rate=${ratePrice}`);
 
     return NextResponse.json({ rate: ratePrice, title: rateTitle });
   } catch (err) {
