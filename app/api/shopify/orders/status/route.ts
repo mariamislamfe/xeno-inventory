@@ -80,7 +80,7 @@ async function confirmOrder(shopifyId: number): Promise<{ ok: boolean; error?: s
   const { order } = await getResp.json() as {
     order: { name: string; tags: string; total_price: string; phone?: string | null; customer?: { first_name?: string; last_name?: string; phone?: string | null } | null };
   };
-  const drop = new Set(["cancelled", "postponed", "ملغي"]);
+  const drop = new Set(["cancelled", "postponed", "ملغي", "waiting"]);
   const tags = order.tags.split(",").map((t) => t.trim()).filter((t) => t && !drop.has(t.toLowerCase()));
   if (!tags.includes("confirmed")) tags.push("confirmed");
 
@@ -105,13 +105,15 @@ async function confirmOrder(shopifyId: number): Promise<{ ok: boolean; error?: s
   return { ok: true };
 }
 
-// Back to "جديد": drop the confirmed tag
-async function unconfirmOrder(shopifyId: number): Promise<{ ok: boolean; error?: string }> {
+// "جديد" drops the confirmed / waiting tags; "انتظار" swaps confirmed for waiting
+async function setReviewTag(shopifyId: number, waiting: boolean): Promise<{ ok: boolean; error?: string }> {
   const orderUrl = `https://${SHOP}/admin/api/${VERSION}/orders/${shopifyId}.json`;
   const getResp = await sfetch(orderUrl, { headers: h(), cache: "no-store" });
   if (!getResp.ok) return { ok: false, error: `order fetch failed: ${getResp.status}` };
   const { order } = await getResp.json() as { order: { tags: string } };
-  const tags = order.tags.split(",").map((t) => t.trim()).filter((t) => t && t.toLowerCase() !== "confirmed");
+  const tags = order.tags.split(",").map((t) => t.trim())
+    .filter((t) => t && !["confirmed", "waiting"].includes(t.toLowerCase()));
+  if (waiting) tags.push("waiting");
 
   const putResp = await sfetch(orderUrl, {
     method:  "PUT",
@@ -154,7 +156,9 @@ export async function POST(req: NextRequest) {
     } else if (action === "confirm") {
       result = await confirmOrder(Number(shopifyId));
     } else if (action === "unconfirm") {
-      result = await unconfirmOrder(Number(shopifyId));
+      result = await setReviewTag(Number(shopifyId), false);
+    } else if (action === "wait") {
+      result = await setReviewTag(Number(shopifyId), true);
     } else if (action === "delete") {
       // Deleting orders is a manager-only action
       const auth = await requireAdmin();

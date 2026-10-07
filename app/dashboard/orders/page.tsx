@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { RefreshCw, Eye, Printer, Truck, Loader2, Search, ChevronDown, Tag, X, Plus, Save, CheckCircle2, XCircle, Trash2, RotateCcw } from "lucide-react";
+import { RefreshCw, Eye, Printer, Truck, Loader2, Search, ChevronDown, Tag, X, Plus, Save, CheckCircle2, XCircle, Trash2, RotateCcw, Clock } from "lucide-react";
 import type { AddressValue } from "@/components/orders/AddressPicker";
 import { phoneKey } from "@/lib/phone";
 import { GOV_EN } from "@/lib/shopify/provinces";
@@ -348,19 +348,27 @@ const STATUS_DISPLAY: Record<string, { label: string; variant: "success" | "warn
 function isConfirmed(o: XenoOrder) {
   return o.tags.some((t) => t.toLowerCase() === "confirmed");
 }
+// "انتظار" = on hold (the "waiting" tag)
+function isWaiting(o: XenoOrder) {
+  return o.tags.some((t) => t.toLowerCase() === "waiting");
+}
 function statusDisplay(o: XenoOrder) {
   if ((o.status === "pending" || o.status === "processing") && isConfirmed(o)) {
     return { label: "مكتمل", variant: "success" as const };
+  }
+  if ((o.status === "pending" || o.status === "processing") && isWaiting(o)) {
+    return { label: "انتظار", variant: "info" as const };
   }
   return STATUS_DISPLAY[o.status] ?? { label: o.status, variant: "neutral" as const };
 }
 
 // ── Order actions (same action for one order or a whole selection) ─────
-type OrderAction = "confirm" | "unconfirm" | "cancel" | "delete" | "ship";
+type OrderAction = "confirm" | "unconfirm" | "wait" | "cancel" | "delete" | "ship";
 
 const ACTION_LABELS: Record<OrderAction, { button: string; done: (n: number) => string; ask?: (n: number) => string }> = {
   confirm:   { button: "مكتمل", done: (n) => n === 1 ? "الطلب بقى مكتمل ✓" : `${n} طلب بقوا مكتملين ✓` },
   unconfirm: { button: "جديد",  done: (n) => n === 1 ? "الطلب رجع جديد"     : `${n} طلب رجعوا جديد` },
+  wait:      { button: "انتظار", done: (n) => n === 1 ? "الطلب في الانتظار"  : `${n} طلب في الانتظار` },
   cancel:  { button: "إلغاء الطلبات", done: (n) => n === 1 ? "تم إلغاء الطلب"      : `تم إلغاء ${n} طلب`,
              ask:  (n) => `سيتم إلغاء ${n} طلب على Shopify. متأكد؟` },
   delete:  { button: "حذف",         done: (n) => n === 1 ? "تم حذف الطلب"        : `تم حذف ${n} طلب`,
@@ -472,11 +480,12 @@ const VROBO_TAGS = [
 ];
 
 // ── Filter tabs ────────────────────────────────────────────────────────
-type TabKey = "any" | "cancelled" | "fulfilled" | "unfulfilled" | "confirmed" | "postponed";
+type TabKey = "any" | "cancelled" | "fulfilled" | "unfulfilled" | "waiting" | "confirmed" | "postponed";
 
 const TABS: { key: TabKey; label: string; shopifyParam: Record<string, string> }[] = [
   { key: "any",         label: "الكل",        shopifyParam: { status: "any" } },
   { key: "unfulfilled", label: "جديدة",       shopifyParam: { status: "open",   fulfillment_status: "unfulfilled" } },
+  { key: "waiting",     label: "⏳ انتظار",   shopifyParam: { status: "open",   tag: "waiting" } },
   { key: "confirmed",   label: "✅ مكتملة",   shopifyParam: { status: "open",   tag: "confirmed" } },
   { key: "cancelled",   label: "ملغية",       shopifyParam: { status: "cancelled" } },
   { key: "fulfilled",   label: "تم التسليم",  shopifyParam: { status: "closed", fulfillment_status: "fulfilled" } },
@@ -571,9 +580,11 @@ export default function OrdersPage() {
     }
     setOrders((prev) => prev.map((o) => {
       if (!ids.has(o.id)) return o;
-      if (action === "unconfirm") return { ...o, tags: o.tags.filter((t) => t.toLowerCase() !== "confirmed") };
+      const review = o.tags.filter((t) => !["confirmed", "waiting"].includes(t.toLowerCase()));
+      if (action === "unconfirm") return { ...o, tags: review };
+      if (action === "wait")      return { ...o, tags: [...review, "waiting"] };
       if (action === "cancel")  return { ...o, status: "cancelled" };
-      const tags = o.tags.filter((t) => !["cancelled", "postponed", "ملغي"].includes(t.toLowerCase()));
+      const tags = o.tags.filter((t) => !["cancelled", "postponed", "ملغي", "waiting"].includes(t.toLowerCase()));
       return { ...o, tags: tags.includes("confirmed") ? tags : [...tags, "confirmed"] };
     }));
   }
@@ -666,10 +677,10 @@ export default function OrdersPage() {
       if (data.error) throw new Error(data.error);
 
       // Shopify can't exclude these in the query, so drop them here:
-      // "جديدة" = not confirmed yet; "تم التسليم" = fulfilled orders that weren't cancelled later
+      // "جديدة" = not confirmed / waiting yet; "تم التسليم" = fulfilled orders that weren't cancelled later
       const list = data.orders as XenoOrder[];
       setOrders(
-        tab === "unfulfilled" ? list.filter((o) => !isConfirmed(o))
+        tab === "unfulfilled" ? list.filter((o) => !isConfirmed(o) && !isWaiting(o))
         : tab === "fulfilled" ? list.filter((o) => o.status !== "cancelled")
         : list,
       );
@@ -900,6 +911,9 @@ export default function OrdersPage() {
                 <Button variant="secondary" size="sm" icon={<RotateCcw size={13} />} onClick={() => runBulk("unconfirm")}>
                   {ACTION_LABELS.unconfirm.button}
                 </Button>
+                <Button variant="secondary" size="sm" icon={<Clock size={13} />} onClick={() => runBulk("wait")}>
+                  {ACTION_LABELS.wait.button}
+                </Button>
                 <Button variant="secondary" size="sm" icon={<CheckCircle2 size={13} />} onClick={() => runBulk("confirm")}>
                   {ACTION_LABELS.confirm.button}
                 </Button>
@@ -1070,6 +1084,12 @@ export default function OrdersPage() {
                                       className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--warning-text)] hover:bg-[var(--bg-base)] transition-colors whitespace-nowrap"
                                     >
                                       <RotateCcw size={13} /> جديد
+                                    </button>
+                                    <button
+                                      onClick={() => { setStatusMenuId(null); updateOrderStatus(order, "wait"); }}
+                                      className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--info)] hover:bg-[var(--bg-base)] transition-colors whitespace-nowrap"
+                                    >
+                                      <Clock size={13} /> انتظار
                                     </button>
                                     <button
                                       onClick={() => { setStatusMenuId(null); updateOrderStatus(order, "confirm"); }}
