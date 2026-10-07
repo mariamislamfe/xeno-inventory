@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/auth/requireAdmin";
 
 // ── WhatsApp service connection test ─────────────────────────────────────────
 export async function GET() {
+  const auth = await requireAdmin();   // managers only
+  if (!auth.ok) return auth.response;
+
   const WA_URL    = process.env.WA_SERVICE_URL;
   const WA_SECRET = process.env.WA_SECRET;
 

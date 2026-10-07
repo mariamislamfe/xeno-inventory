@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/auth/requireAdmin";
 import crypto from "crypto";
 import { buildAddOrderBiz, cancelJTOrder, jtPost as clientJtPost } from "@/lib/jt/client";
 
@@ -27,6 +28,9 @@ async function jtPost(
 }
 
 export async function GET() {
+  const auth = await requireAdmin();   // managers only
+  if (!auth.ok) return auth.response;
+
   const BASE_URL      = (process.env.JT_BASE_URL      ?? "").trim();
   const UUID          = (process.env.JT_UUID          ?? "").trim();
   const CUSTOMER_CODE = (process.env.JT_CUSTOMER_CODE ?? "").trim();
