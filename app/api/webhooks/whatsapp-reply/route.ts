@@ -66,13 +66,14 @@ export async function POST(req: NextRequest) {
     metadata:  { phone, status, order_number: ordNum },
   });
 
-  // Post note to Shopify order timeline
-  await addShopifyNote(ordId, detail);
+  // Post note to Shopify order timeline + set the order's status tag
+  // (مكتمل / ملغي — reversible from the dashboard like any other status)
+  await addShopifyNote(ordId, detail, status === "confirmed" ? "confirmed" : "cancelled");
 
   return NextResponse.json({ ok: true });
 }
 
-async function addShopifyNote(shopifyOrderId: number | string, newNote: string) {
+async function addShopifyNote(shopifyOrderId: number | string, newNote: string, statusTag: "confirmed" | "cancelled") {
   const shop    = process.env.SHOPIFY_SHOP;
   const token   = process.env.SHOPIFY_ACCESS_TOKEN;
   const version = process.env.SHOPIFY_API_VERSION ?? "2026-07";
@@ -81,12 +82,14 @@ async function addShopifyNote(shopifyOrderId: number | string, newNote: string) 
   try {
     // FIX: fetch existing note first and APPEND, not overwrite
     const getRes = await fetch(
-      `https://${shop}/admin/api/${version}/orders/${shopifyOrderId}.json?fields=id,note`,
+      `https://${shop}/admin/api/${version}/orders/${shopifyOrderId}.json?fields=id,note,tags`,
       { headers: { "X-Shopify-Access-Token": token }, cache: "no-store" }
     );
-    const existingNote: string = getRes.ok
-      ? ((await getRes.json())?.order?.note ?? "")
-      : "";
+    const current = getRes.ok ? ((await getRes.json())?.order ?? {}) : {};
+    const existingNote: string = current.note ?? "";
+    const tags = String(current.tags ?? "").split(",").map((t: string) => t.trim())
+      .filter((t: string) => t && !["confirmed", "waiting", "cancelled", "ملغي"].includes(t.toLowerCase()));
+    tags.push(statusTag);
 
     const combinedNote = existingNote
       ? `${existingNote}\n---\n${newNote}`
@@ -97,7 +100,7 @@ async function addShopifyNote(shopifyOrderId: number | string, newNote: string) 
       {
         method:  "PUT",
         headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
-        body:    JSON.stringify({ order: { id: shopifyOrderId, note: combinedNote } }),
+        body:    JSON.stringify({ order: { id: shopifyOrderId, note: combinedNote, ...(getRes.ok ? { tags: tags.join(",") } : {}) } }),
       }
     );
   } catch (e) {

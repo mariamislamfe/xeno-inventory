@@ -119,6 +119,16 @@ async function sendWhatsApp(raw: ShopifyOrderRaw, order: ReturnType<typeof norma
   const waSecret = process.env.WA_SECRET;
   if (!waUrl || !waSecret) return;
 
+  // Shopify retries webhooks (and merges/re-creates fire orders/create again):
+  // only one confirmation message per order
+  const { data: already } = await supabaseAdmin
+    .from("whatsapp_messages")
+    .select("id")
+    .eq("shopify_order_id", order.shopifyId)
+    .eq("template", "order_confirmation")
+    .limit(1);
+  if (already?.length) return;
+
   // Build items list
   const itemsText = order.items
     .map((i) => `   • ${i.productName}${i.variant ? ` (${i.variant})` : ""} × ${i.quantity}`)
@@ -140,13 +150,12 @@ async function sendWhatsApp(raw: ShopifyOrderRaw, order: ReturnType<typeof norma
     `💰 *الإجمالي: ${order.total.toLocaleString("en-US")} ج.م*\n` +
     `🚚 الشحن عبر J&T Express خلال 2-3 أيام\n` +
     `━━━━━━━━━━━━━━\n\n` +
-    `هل تريد تأكيد الطلب؟\n\n` +
-    `1️⃣ — تأكيد الطلب\n` +
-    `2️⃣ — تأجيل الطلب\n\n` +
+    `اختار من الاستطلاع اللي تحت 👇 لتأكيد الطلب أو إلغائه\n\n` +
     `_فريق XENO في خدمتك دائماً_ 🖤`;
 
   try {
     const res  = await fetch(`${waUrl}/send`, {
+      signal: AbortSignal.timeout(4000),   // Shopify gives webhooks ~5s before retrying
       method: "POST",
       headers: { "Content-Type": "application/json", "x-wa-secret": waSecret },
       body: JSON.stringify({

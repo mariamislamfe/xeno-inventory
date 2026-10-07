@@ -46,8 +46,14 @@ export async function saveShipment(rec: ShipmentRecord): Promise<string | null> 
   if (selErr) return selErr.message;
 
   const row = { ...rec };
-  const { error } = rows?.length
-    ? await supabaseAdmin.from("shipments").update(row).eq("shopify_order_id", rec.shopify_order_id)
-    : await supabaseAdmin.from("shipments").insert(row);
+  if (rows?.length) {
+    // Never replace a saved tracking number with an empty one (e.g. a second,
+    // concurrent ship request that J&T rejected as a duplicate)
+    let q = supabaseAdmin.from("shipments").update(row).eq("shopify_order_id", rec.shopify_order_id);
+    if (!rec.tracking_number) q = q.is("tracking_number", null);
+    const { error } = await q;
+    return error ? error.message : null;
+  }
+  const { error } = await supabaseAdmin.from("shipments").insert(row);
   return error ? error.message : null;
 }

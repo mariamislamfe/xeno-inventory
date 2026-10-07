@@ -116,6 +116,15 @@ export async function POST(req: NextRequest) {
     if (!items?.length) {
       return NextResponse.json({ error: "items required" }, { status: 400 });
     }
+    const badItem = (items as { qty: number; price: number }[]).find((i) =>
+      !Number.isInteger(Number(i.qty)) || Number(i.qty) < 1 || Number(i.qty) > 1000 ||
+      !Number.isFinite(Number(i.price)) || Number(i.price) < 0 || Number(i.price) > 1_000_000);
+    if (badItem) {
+      return NextResponse.json({ error: "كمية أو سعر غير صالح في المنتجات" }, { status: 400 });
+    }
+    if (shippingCost != null && (!Number.isFinite(Number(shippingCost)) || Number(shippingCost) < 0 || Number(shippingCost) > 100_000)) {
+      return NextResponse.json({ error: "سعر الشحن غير صالح" }, { status: 400 });
+    }
 
     // Build Shopify order payload
     const nameParts   = customerName.trim().split(" ");
@@ -135,7 +144,7 @@ export async function POST(req: NextRequest) {
     // Check for existing open orders BEFORE creating — try two independent methods so
     // at least one will succeed even if resolveCustomerId returned null.
     const seen = new Set<number>();
-    let existingOpenOrders: XenoOrder[] = [];
+    const existingOpenOrders: XenoOrder[] = [];
 
     async function fetchOpenOrders(qs: string) {
       try {
@@ -179,6 +188,8 @@ export async function POST(req: NextRequest) {
 
     const shopifyOrder: Record<string, unknown> = {
       ...(orderEmail ? { email: orderEmail } : {}),
+      // Orders created through the API don't touch stock unless asked to
+      inventory_behaviour: "decrement_ignoring_policy",
       financial_status: "pending",
       send_receipt:     false,
       send_fulfillment_receipt: false,

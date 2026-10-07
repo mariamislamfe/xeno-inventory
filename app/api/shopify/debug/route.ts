@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/auth/requireAdmin";
 
 const SHOP    = process.env.SHOPIFY_SHOP!;
 const TOKEN   = process.env.SHOPIFY_ACCESS_TOKEN!;
@@ -9,6 +10,9 @@ function h() { return { "X-Shopify-Access-Token": TOKEN }; }
 export const revalidate = 0;
 
 export async function GET() {
+  const auth = await requireAdmin();   // managers only
+  if (!auth.ok) return auth.response;
+
   const [custResp, countResp, zonesResp] = await Promise.all([
     fetch(`https://${SHOP}/admin/api/${VERSION}/customers.json?limit=5&order=updated_at+DESC`, { headers: h() }),
     fetch(`https://${SHOP}/admin/api/${VERSION}/customers/count.json`, { headers: h() }),
