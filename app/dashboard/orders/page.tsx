@@ -665,8 +665,14 @@ export default function OrdersPage() {
       const data = await res.json();
       if (data.error) throw new Error(data.error);
 
-      // "جديدة" = not confirmed yet (Shopify can't filter out a tag)
-      setOrders(tab === "unfulfilled" ? (data.orders as XenoOrder[]).filter((o) => !isConfirmed(o)) : data.orders);
+      // Shopify can't exclude these in the query, so drop them here:
+      // "جديدة" = not confirmed yet; "تم التسليم" = fulfilled orders that weren't cancelled later
+      const list = data.orders as XenoOrder[];
+      setOrders(
+        tab === "unfulfilled" ? list.filter((o) => !isConfirmed(o))
+        : tab === "fulfilled" ? list.filter((o) => o.status !== "cancelled")
+        : list,
+      );
       setSelectedIds(new Set()); // selection is per loaded page
       setHasMore(data.has_more ?? false);
       setCurrentPage(page);
