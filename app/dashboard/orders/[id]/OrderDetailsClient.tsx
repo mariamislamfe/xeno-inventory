@@ -495,12 +495,14 @@ export function OrderDetailsClient({ order: initialOrder }: OrderDetailsClientPr
   const open      = order.status === "pending" || order.status === "processing";
   const confirmed = order.tags.some((t) => t.toLowerCase() === "confirmed");
   const waiting   = order.tags.some((t) => t.toLowerCase() === "waiting");
-  const st = open && confirmed ? { label: "مكتمل", variant: "success" as const }
+  const cancelTag = order.tags.some((t) => ["cancelled", "ملغي"].includes(t.toLowerCase()));
+  const st = open && cancelTag ? { label: "ملغي", variant: "danger" as const }
+    : open && confirmed ? { label: "مكتمل", variant: "success" as const }
     : open && waiting ? { label: "انتظار", variant: "info" as const }
     : STATUS_DISPLAY[order.status] ?? { label: order.status, variant: "neutral" as const };
   const pm = PAYMENT_DISPLAY[order.paymentStatus] ?? { label: order.paymentStatus, variant: "neutral" as const };
 
-  const canShip = !order.trackingNumber && order.status !== "cancelled" && order.status !== "delivered";
+  const canShip = !order.trackingNumber && order.status !== "cancelled" && order.status !== "delivered" && !cancelTag;
 
   return (
     <div className="space-y-5">

@@ -105,15 +105,17 @@ async function confirmOrder(shopifyId: number): Promise<{ ok: boolean; error?: s
   return { ok: true };
 }
 
-// "جديد" drops the confirmed / waiting tags; "انتظار" swaps confirmed for waiting
-async function setReviewTag(shopifyId: number, waiting: boolean): Promise<{ ok: boolean; error?: string }> {
+// Status tags are all reversible: "جديد" = none, "انتظار" = waiting, "ملغي" = cancelled.
+// (Shopify's own cancel can't be undone, so it's only used right before deleting.)
+const STATUS_TAGS = ["confirmed", "waiting", "cancelled", "ملغي"];
+async function setStatusTag(shopifyId: number, tag: "waiting" | "cancelled" | null): Promise<{ ok: boolean; error?: string }> {
   const orderUrl = `https://${SHOP}/admin/api/${VERSION}/orders/${shopifyId}.json`;
   const getResp = await sfetch(orderUrl, { headers: h(), cache: "no-store" });
   if (!getResp.ok) return { ok: false, error: `order fetch failed: ${getResp.status}` };
   const { order } = await getResp.json() as { order: { tags: string } };
   const tags = order.tags.split(",").map((t) => t.trim())
-    .filter((t) => t && !["confirmed", "waiting"].includes(t.toLowerCase()));
-  if (waiting) tags.push("waiting");
+    .filter((t) => t && !STATUS_TAGS.includes(t.toLowerCase()));
+  if (tag) tags.push(tag);
 
   const putResp = await sfetch(orderUrl, {
     method:  "PUT",
@@ -123,7 +125,7 @@ async function setReviewTag(shopifyId: number, waiting: boolean): Promise<{ ok: 
   if (!putResp.ok) return { ok: false, error: await putResp.text() };
 
   await supabaseAdmin.from("xeno_ops")
-    .update({ op_status: "pending", updated_at: new Date().toISOString() })
+    .update({ op_status: tag === "cancelled" ? "cancelled" : "pending", updated_at: new Date().toISOString() })
     .eq("shopify_order_id", shopifyId);
   return { ok: true };
 }
@@ -152,13 +154,13 @@ export async function POST(req: NextRequest) {
     if (action === "fulfill") {
       result = await fulfillOrder(Number(shopifyId));
     } else if (action === "cancel") {
-      result = await cancelOrder(Number(shopifyId));
+      result = await setStatusTag(Number(shopifyId), "cancelled");
     } else if (action === "confirm") {
       result = await confirmOrder(Number(shopifyId));
     } else if (action === "unconfirm") {
-      result = await setReviewTag(Number(shopifyId), false);
+      result = await setStatusTag(Number(shopifyId), null);
     } else if (action === "wait") {
-      result = await setReviewTag(Number(shopifyId), true);
+      result = await setStatusTag(Number(shopifyId), "waiting");
     } else if (action === "delete") {
       // Deleting orders is a manager-only action
       const auth = await requireAdmin();

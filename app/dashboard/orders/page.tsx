@@ -352,7 +352,14 @@ function isConfirmed(o: XenoOrder) {
 function isWaiting(o: XenoOrder) {
   return o.tags.some((t) => t.toLowerCase() === "waiting");
 }
+// "ملغي" from the dashboard = the "cancelled" tag (reversible), unlike a Shopify cancel
+function isCancelTagged(o: XenoOrder) {
+  return o.tags.some((t) => ["cancelled", "ملغي"].includes(t.toLowerCase()));
+}
 function statusDisplay(o: XenoOrder) {
+  if ((o.status === "pending" || o.status === "processing") && isCancelTagged(o)) {
+    return { label: "ملغي", variant: "danger" as const };
+  }
   if ((o.status === "pending" || o.status === "processing") && isConfirmed(o)) {
     return { label: "مكتمل", variant: "success" as const };
   }
@@ -369,8 +376,7 @@ const ACTION_LABELS: Record<OrderAction, { button: string; done: (n: number) => 
   confirm:   { button: "مكتمل", done: (n) => n === 1 ? "الطلب بقى مكتمل ✓" : `${n} طلب بقوا مكتملين ✓` },
   unconfirm: { button: "جديد",  done: (n) => n === 1 ? "الطلب رجع جديد"     : `${n} طلب رجعوا جديد` },
   wait:      { button: "انتظار", done: (n) => n === 1 ? "الطلب في الانتظار"  : `${n} طلب في الانتظار` },
-  cancel:  { button: "إلغاء الطلبات", done: (n) => n === 1 ? "تم إلغاء الطلب"      : `تم إلغاء ${n} طلب`,
-             ask:  (n) => `سيتم إلغاء ${n} طلب على Shopify. متأكد؟` },
+  cancel:  { button: "ملغي",        done: (n) => n === 1 ? "الطلب بقى ملغي"      : `${n} طلب بقوا ملغيين` },
   delete:  { button: "حذف",         done: (n) => n === 1 ? "تم حذف الطلب"        : `تم حذف ${n} طلب`,
              ask:  (n) => `سيتم إلغاء وحذف ${n} طلب نهائياً من Shopify، ولا يمكن التراجع عن الحذف. متأكد؟` },
   ship:    { button: "شحن",         done: (n) => n === 1 ? "تم شحن الطلب ✓"     : `تم شحن ${n} طلب ✓`,
@@ -379,7 +385,7 @@ const ACTION_LABELS: Record<OrderAction, { button: string; done: (n: number) => 
 
 // Orders that can still be sent to J&T
 function canShip(o: XenoOrder) {
-  return !o.trackingNumber && o.status !== "delivered" && o.status !== "cancelled";
+  return !o.trackingNumber && o.status !== "delivered" && o.status !== "cancelled" && !isCancelTagged(o);
 }
 
 // Returns the tracking number for "ship"
@@ -487,7 +493,7 @@ const TABS: { key: TabKey; label: string; shopifyParam: Record<string, string> }
   { key: "unfulfilled", label: "جديدة",       shopifyParam: { status: "open",   fulfillment_status: "unfulfilled" } },
   { key: "waiting",     label: "⏳ انتظار",   shopifyParam: { status: "open",   tag: "waiting" } },
   { key: "confirmed",   label: "✅ مكتملة",   shopifyParam: { status: "open",   tag: "confirmed" } },
-  { key: "cancelled",   label: "ملغية",       shopifyParam: { status: "cancelled" } },
+  { key: "cancelled",   label: "ملغية",       shopifyParam: { status: "any",    tag: "cancelled" } },
   { key: "postponed",   label: "⏰ مؤجلة",    shopifyParam: { status: "any",    tag: "postponed" } },
 ];
 
@@ -541,6 +547,7 @@ export default function OrdersPage() {
     const groups = new Map<string, XenoOrder[]>();
     for (const o of orders) {
       if (o.status !== "pending" && o.status !== "processing") continue;
+      if (isCancelTagged(o)) continue;
       if (o.trackingNumber) continue; // already sent to J&T — never merge/delete it
       const phone = phoneKey(o.customerPhone); // +20 / 0020 / 0 prefixes → same key
       if (!phone) continue;
@@ -579,10 +586,10 @@ export default function OrdersPage() {
     }
     setOrders((prev) => prev.map((o) => {
       if (!ids.has(o.id)) return o;
-      const review = o.tags.filter((t) => !["confirmed", "waiting"].includes(t.toLowerCase()));
+      const review = o.tags.filter((t) => !["confirmed", "waiting", "cancelled", "ملغي"].includes(t.toLowerCase()));
       if (action === "unconfirm") return { ...o, tags: review };
       if (action === "wait")      return { ...o, tags: [...review, "waiting"] };
-      if (action === "cancel")  return { ...o, status: "cancelled" };
+      if (action === "cancel")    return { ...o, tags: [...review, "cancelled"] };
       const tags = o.tags.filter((t) => !["cancelled", "postponed", "ملغي", "waiting"].includes(t.toLowerCase()));
       return { ...o, tags: tags.includes("confirmed") ? tags : [...tags, "confirmed"] };
     }));
@@ -678,7 +685,7 @@ export default function OrdersPage() {
       // Shopify can't exclude these in the query, so drop them here:
       // "جديدة" = not confirmed / waiting yet
       const list = data.orders as XenoOrder[];
-      setOrders(tab === "unfulfilled" ? list.filter((o) => !isConfirmed(o) && !isWaiting(o)) : list);
+      setOrders(tab === "unfulfilled" ? list.filter((o) => !isConfirmed(o) && !isWaiting(o) && !isCancelTagged(o)) : list);
       setSelectedIds(new Set()); // selection is per loaded page
       setHasMore(data.has_more ?? false);
       setCurrentPage(page);
@@ -912,7 +919,7 @@ export default function OrdersPage() {
                 <Button variant="secondary" size="sm" icon={<CheckCircle2 size={13} />} onClick={() => runBulk("confirm")}>
                   {ACTION_LABELS.confirm.button}
                 </Button>
-                <Button variant="secondary" size="sm" icon={<XCircle size={13} />} onClick={() => setBulkConfirm("cancel")}>
+                <Button variant="secondary" size="sm" icon={<XCircle size={13} />} onClick={() => runBulk("cancel")}>
                   {ACTION_LABELS.cancel.button}
                 </Button>
                 <Button variant="primary" size="sm" icon={<Truck size={13} />} onClick={() => setBulkConfirm("ship")}>
@@ -1155,7 +1162,7 @@ export default function OrdersPage() {
                                 <Printer size={14} />
                               </button>
                             ) : (
-                              order.status !== "delivered" && order.status !== "cancelled" && (
+                              canShip(order) && (
                                 <button
                                   onClick={() => setShipOrder(order)}
                                   className="p-1.5 rounded-[var(--radius-sm)] text-[var(--text-muted)] hover:bg-[var(--primary-light)] hover:text-[var(--primary)] transition-colors"
