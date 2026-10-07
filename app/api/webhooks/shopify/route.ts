@@ -52,11 +52,13 @@ export async function POST(req: NextRequest) {
     console.error("[webhook] handler error:", errorMsg);
   }
 
-  // Always log — even on handler failure
+  // Always log — even on handler failure. Keep only a summary unless it failed:
+  // full order payloads (~8 KB each) would fill the database within months.
+  const p = payload as { id?: number; name?: string; financial_status?: string; fulfillment_status?: string };
   await supabaseAdmin.from("webhook_log").insert({
     topic,
     shop,
-    payload,
+    payload:   processed ? { id: p?.id, name: p?.name, financial_status: p?.financial_status, fulfillment_status: p?.fulfillment_status } : payload,
     processed,
     error: errorMsg,
   });

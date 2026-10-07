@@ -3,12 +3,13 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { RefreshCw, Eye, Printer, Truck, Loader2, Search, ChevronDown, Tag, X, Plus, Save, CheckCircle2, XCircle, Merge, Trash2, BadgeCheck } from "lucide-react";
+import { RefreshCw, Eye, Printer, Truck, Loader2, Search, ChevronDown, Tag, X, Plus, Save, CheckCircle2, XCircle, Trash2, RotateCcw } from "lucide-react";
 import type { AddressValue } from "@/components/orders/AddressPicker";
 import { phoneKey } from "@/lib/phone";
 import { GOV_EN } from "@/lib/shopify/provinces";
 import { ShipModal } from "@/components/orders/ShipModal";
 import { printOrderLabel } from "@/lib/print-label";
+import { saveOrderNav } from "@/lib/order-nav";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { Badge } from "@/components/ui/Badge";
@@ -338,17 +339,28 @@ function CreateOrderModal({ open, onClose, onCreated }: { open: boolean; onClose
 const STATUS_DISPLAY: Record<string, { label: string; variant: "success" | "warning" | "danger" | "info" | "neutral" }> = {
   pending:    { label: "جديد",    variant: "warning" },
   processing: { label: "معالجة", variant: "info"    },
-  delivered:  { label: "مكتمل",  variant: "success" },
+  delivered:  { label: "تم التسليم", variant: "info" },
   cancelled:  { label: "ملغي",   variant: "danger"  },
   returned:   { label: "مرتجع",  variant: "neutral" },
 };
 
+// "مكتمل" = reviewed and confirmed (the "confirmed" tag), not yet shipped
+function isConfirmed(o: XenoOrder) {
+  return o.tags.some((t) => t.toLowerCase() === "confirmed");
+}
+function statusDisplay(o: XenoOrder) {
+  if ((o.status === "pending" || o.status === "processing") && isConfirmed(o)) {
+    return { label: "مكتمل", variant: "success" as const };
+  }
+  return STATUS_DISPLAY[o.status] ?? { label: o.status, variant: "neutral" as const };
+}
+
 // ── Order actions (same action for one order or a whole selection) ─────
-type OrderAction = "confirm" | "fulfill" | "cancel" | "delete" | "ship";
+type OrderAction = "confirm" | "unconfirm" | "cancel" | "delete" | "ship";
 
 const ACTION_LABELS: Record<OrderAction, { button: string; done: (n: number) => string; ask?: (n: number) => string }> = {
-  confirm: { button: "تأكيد",       done: (n) => n === 1 ? "تم تأكيد الطلب ✓"   : `تم تأكيد ${n} طلب ✓` },
-  fulfill: { button: "مكتمل",       done: (n) => n === 1 ? "تم إكمال الطلب ✓"   : `تم إكمال ${n} طلب ✓` },
+  confirm:   { button: "مكتمل", done: (n) => n === 1 ? "الطلب بقى مكتمل ✓" : `${n} طلب بقوا مكتملين ✓` },
+  unconfirm: { button: "جديد",  done: (n) => n === 1 ? "الطلب رجع جديد"     : `${n} طلب رجعوا جديد` },
   cancel:  { button: "إلغاء الطلبات", done: (n) => n === 1 ? "تم إلغاء الطلب"      : `تم إلغاء ${n} طلب`,
              ask:  (n) => `سيتم إلغاء ${n} طلب على Shopify. متأكد؟` },
   delete:  { button: "حذف",         done: (n) => n === 1 ? "تم حذف الطلب"        : `تم حذف ${n} طلب`,
@@ -460,14 +472,14 @@ const VROBO_TAGS = [
 ];
 
 // ── Filter tabs ────────────────────────────────────────────────────────
-type TabKey = "any" | "pending" | "fulfilled" | "unfulfilled" | "confirmed" | "postponed";
+type TabKey = "any" | "cancelled" | "fulfilled" | "unfulfilled" | "confirmed" | "postponed";
 
 const TABS: { key: TabKey; label: string; shopifyParam: Record<string, string> }[] = [
   { key: "any",         label: "الكل",        shopifyParam: { status: "any" } },
   { key: "unfulfilled", label: "جديدة",       shopifyParam: { status: "open",   fulfillment_status: "unfulfilled" } },
-  { key: "pending",     label: "قيد التنفيذ",  shopifyParam: { status: "open",   fulfillment_status: "partial" } },
-  { key: "fulfilled",   label: "مكتملة",      shopifyParam: { status: "closed", fulfillment_status: "fulfilled" } },
-  { key: "confirmed",   label: "✅ مؤكدة",    shopifyParam: { status: "any",    tag: "confirmed" } },
+  { key: "confirmed",   label: "✅ مكتملة",   shopifyParam: { status: "open",   tag: "confirmed" } },
+  { key: "cancelled",   label: "ملغية",       shopifyParam: { status: "cancelled" } },
+  { key: "fulfilled",   label: "تم التسليم",  shopifyParam: { status: "closed", fulfillment_status: "fulfilled" } },
   { key: "postponed",   label: "⏰ مؤجلة",    shopifyParam: { status: "any",    tag: "postponed" } },
 ];
 
@@ -521,6 +533,7 @@ export default function OrdersPage() {
     const groups = new Map<string, XenoOrder[]>();
     for (const o of orders) {
       if (o.status !== "pending" && o.status !== "processing") continue;
+      if (o.trackingNumber) continue; // already sent to J&T — never merge/delete it
       const phone = phoneKey(o.customerPhone); // +20 / 0020 / 0 prefixes → same key
       if (!phone) continue;
       // Group by phone first, then check name within group
@@ -558,7 +571,7 @@ export default function OrdersPage() {
     }
     setOrders((prev) => prev.map((o) => {
       if (!ids.has(o.id)) return o;
-      if (action === "fulfill") return { ...o, status: "delivered" };
+      if (action === "unconfirm") return { ...o, tags: o.tags.filter((t) => t.toLowerCase() !== "confirmed") };
       if (action === "cancel")  return { ...o, status: "cancelled" };
       const tags = o.tags.filter((t) => !["cancelled", "postponed", "ملغي"].includes(t.toLowerCase()));
       return { ...o, tags: tags.includes("confirmed") ? tags : [...tags, "confirmed"] };
@@ -652,7 +665,8 @@ export default function OrdersPage() {
       const data = await res.json();
       if (data.error) throw new Error(data.error);
 
-      setOrders(data.orders);
+      // "جديدة" = not confirmed yet (Shopify can't filter out a tag)
+      setOrders(tab === "unfulfilled" ? (data.orders as XenoOrder[]).filter((o) => !isConfirmed(o)) : data.orders);
       setSelectedIds(new Set()); // selection is per loaded page
       setHasMore(data.has_more ?? false);
       setCurrentPage(page);
@@ -678,6 +692,9 @@ export default function OrdersPage() {
   useEffect(() => {
     resetAndLoad(activeTab, search, tagFilter);
   }, [activeTab, search, tagFilter]);
+
+  // Lets an order page step to the order above / below it in this list
+  useEffect(() => { saveOrderNav(orders.map((o) => o.id)); }, [orders]);
 
   // Auto-merge duplicate groups detected on the loaded page
   const autoMergedKeys = useRef(new Set<string>());
@@ -874,11 +891,11 @@ export default function OrdersPage() {
                 تم تحديد {selectedCount} طلب
               </span>
               <div className="flex items-center gap-1.5 flex-wrap">
-                <Button variant="secondary" size="sm" icon={<BadgeCheck size={13} />} onClick={() => runBulk("confirm")}>
-                  {ACTION_LABELS.confirm.button}
+                <Button variant="secondary" size="sm" icon={<RotateCcw size={13} />} onClick={() => runBulk("unconfirm")}>
+                  {ACTION_LABELS.unconfirm.button}
                 </Button>
-                <Button variant="secondary" size="sm" icon={<CheckCircle2 size={13} />} onClick={() => runBulk("fulfill")}>
-                  {ACTION_LABELS.fulfill.button}
+                <Button variant="secondary" size="sm" icon={<CheckCircle2 size={13} />} onClick={() => runBulk("confirm")}>
+                  {ACTION_LABELS.confirm.button}
                 </Button>
                 <Button variant="secondary" size="sm" icon={<XCircle size={13} />} onClick={() => setBulkConfirm("cancel")}>
                   {ACTION_LABELS.cancel.button}
@@ -979,7 +996,7 @@ export default function OrdersPage() {
                 </thead>
                 <tbody>
                   {orders.map((order) => {
-                    const st = STATUS_DISPLAY[order.status] ?? { label: order.status, variant: "neutral" as const };
+                    const st = statusDisplay(order);
                     const pm = PAYMENT_DISPLAY[order.paymentStatus] ?? { label: order.paymentStatus, variant: "neutral" as const };
                     return (
                       <tr key={order.id} className={selectedIds.has(order.id) ? "bg-(--primary-light)" : ""}>
@@ -1043,13 +1060,13 @@ export default function OrdersPage() {
                                   <div className="fixed inset-0 z-10" onClick={() => setStatusMenuId(null)} />
                                   <div className="absolute z-20 top-full mt-1 right-0 flex flex-col bg-[var(--bg-card)] border border-[var(--border-color)] rounded-md shadow-lg overflow-hidden min-w-[110px]">
                                     <button
-                                      onClick={() => { setStatusMenuId(null); updateOrderStatus(order, "confirm"); }}
-                                      className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--primary)] hover:bg-[var(--bg-base)] transition-colors whitespace-nowrap"
+                                      onClick={() => { setStatusMenuId(null); updateOrderStatus(order, "unconfirm"); }}
+                                      className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--warning-text)] hover:bg-[var(--bg-base)] transition-colors whitespace-nowrap"
                                     >
-                                      <BadgeCheck size={13} /> مؤكد
+                                      <RotateCcw size={13} /> جديد
                                     </button>
                                     <button
-                                      onClick={() => { setStatusMenuId(null); updateOrderStatus(order, "fulfill"); }}
+                                      onClick={() => { setStatusMenuId(null); updateOrderStatus(order, "confirm"); }}
                                       className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--success)] hover:bg-[var(--bg-base)] transition-colors whitespace-nowrap"
                                     >
                                       <CheckCircle2 size={13} /> مكتمل

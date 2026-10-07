@@ -2,9 +2,10 @@
 
 import React, { useState, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import {
-  ArrowRight, CheckCircle2, XCircle, Truck, Phone, Mail, MapPin,
+  ArrowRight, ChevronUp, ChevronDown, CheckCircle2, XCircle, Truck, Phone, Mail, MapPin,
   Package, MessageSquare, Printer, Edit2, Tag, Plus, X,
   Loader2, ExternalLink, Save, ShoppingBag, AlertCircle,
 } from "lucide-react";
@@ -14,6 +15,7 @@ import { Badge } from "@/components/ui/Badge";
 import { useToast } from "@/components/ui/Toast";
 import type { XenoOrder } from "@/lib/shopify/orders";
 import { ShipModal } from "@/components/orders/ShipModal";
+import { neighboursFromList } from "@/lib/order-nav";
 import { printOrderLabel } from "@/lib/print-label";
 import type { AddressValue } from "@/components/orders/AddressPicker";
 
@@ -46,7 +48,7 @@ function tagStyle(t: string) {
 const STATUS_DISPLAY: Record<string, { label: string; variant: "success" | "warning" | "danger" | "info" | "neutral" }> = {
   pending:    { label: "جديد",     variant: "warning" },
   processing: { label: "معالجة",  variant: "info"    },
-  delivered:  { label: "مكتمل",   variant: "success" },
+  delivered:  { label: "تم التسليم", variant: "info" },
   cancelled:  { label: "ملغي",    variant: "danger"  },
   returned:   { label: "مرتجع",   variant: "neutral" },
 };
@@ -441,6 +443,47 @@ interface OrderDetailsClientProps {
   order: XenoOrder;
 }
 
+// Up = the order above this one in the list, down = the one below it.
+// Uses the last orders list (same tab/filter); otherwise asks Shopify for the
+// next newer / older order.
+function OrderStepper({ order }: { order: XenoOrder }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState<"up" | "down" | null>(null);
+  const { error } = useToast();
+
+  async function go(dir: "up" | "down") {
+    setBusy(dir);
+    try {
+      let target = neighboursFromList(order.id)?.[dir] ?? null;
+      if (!target) {
+        const qs = new URLSearchParams({ dir, created_at: order.createdAt });
+        const res = await fetch(`/api/shopify/orders/${order.shopifyId}/adjacent?${qs}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "تعذر جلب الطلب");
+        target = data.id;
+      }
+      if (target) router.push(`/dashboard/orders/${target}`);
+      else error(dir === "up" ? "ده أحدث طلب" : "ده أقدم طلب");
+    } catch (err) {
+      error("خطأ", String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const btn = "p-1.5 rounded-[var(--radius-sm)] border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-[var(--primary)] hover:border-[var(--primary)] transition-colors disabled:opacity-40";
+  return (
+    <div className="flex items-center gap-1 mr-auto">
+      <button className={btn} title="الطلب اللي فوقه" disabled={busy !== null} onClick={() => go("up")}>
+        {busy === "up" ? <Loader2 size={15} className="animate-spin" /> : <ChevronUp size={15} />}
+      </button>
+      <button className={btn} title="الطلب اللي تحته" disabled={busy !== null} onClick={() => go("down")}>
+        {busy === "down" ? <Loader2 size={15} className="animate-spin" /> : <ChevronDown size={15} />}
+      </button>
+    </div>
+  );
+}
+
 export function OrderDetailsClient({ order: initialOrder }: OrderDetailsClientProps) {
   const [order,          setOrder]          = useState(initialOrder);
   const [editOpen,       setEditOpen]       = useState(false);
@@ -448,7 +491,11 @@ export function OrderDetailsClient({ order: initialOrder }: OrderDetailsClientPr
   const [shipOpen,       setShipOpen]       = useState(false);
   const { error: toastError } = useToast();
 
-  const st = STATUS_DISPLAY[order.status]  ?? { label: order.status,        variant: "neutral" as const };
+  // "مكتمل" = confirmed (tag), still waiting to be shipped
+  const confirmed = order.tags.some((t) => t.toLowerCase() === "confirmed");
+  const st = (order.status === "pending" || order.status === "processing") && confirmed
+    ? { label: "مكتمل", variant: "success" as const }
+    : STATUS_DISPLAY[order.status] ?? { label: order.status, variant: "neutral" as const };
   const pm = PAYMENT_DISPLAY[order.paymentStatus] ?? { label: order.paymentStatus, variant: "neutral" as const };
 
   const canShip = !order.trackingNumber && order.status !== "cancelled" && order.status !== "delivered";
@@ -456,13 +503,14 @@ export function OrderDetailsClient({ order: initialOrder }: OrderDetailsClientPr
   return (
     <div className="space-y-5">
 
-      {/* ── Breadcrumb ─────────────────────────────────────────────── */}
+      {/* ── Breadcrumb + previous / next order ────────────────────── */}
       <div className="flex items-center gap-2 text-sm text-[var(--text-muted)]">
         <Link href="/dashboard/orders" className="flex items-center gap-1.5 hover:text-[var(--primary)] transition-colors">
           <ArrowRight size={15} />الطلبات
         </Link>
         <span>/</span>
         <span className="text-[var(--text-primary)] font-medium">{order.orderNumber}</span>
+        <OrderStepper order={order} />
       </div>
 
       {/* ── Header Card ────────────────────────────────────────────── */}
