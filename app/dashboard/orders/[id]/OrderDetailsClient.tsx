@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import {
-  ArrowRight, ChevronUp, ChevronDown, CheckCircle2, XCircle, Truck, Phone, Mail, MapPin,
+  ArrowRight, ChevronUp, ChevronDown, CheckCircle2, XCircle, Truck, Phone, Mail, MapPin, RotateCcw, Clock,
   Package, MessageSquare, Printer, Edit2, Tag, Plus, X,
   Loader2, ExternalLink, Save, ShoppingBag, AlertCircle,
 } from "lucide-react";
@@ -484,6 +484,77 @@ function OrderStepper({ order }: { order: XenoOrder }) {
   );
 }
 
+// Status menu (same four statuses as the orders list). All are tags, so any of
+// them can be changed again later.
+type StatusAction = "unconfirm" | "wait" | "confirm" | "cancel";
+const STATUS_TAG: Record<StatusAction, string | null> = { unconfirm: null, wait: "waiting", confirm: "confirmed", cancel: "cancelled" };
+
+function StatusMenu({ order, label, variant, onChange }: {
+  order: XenoOrder;
+  label: string;
+  variant: "success" | "warning" | "danger" | "info" | "neutral";
+  onChange: (tags: string[]) => void;
+}) {
+  const [menu, setMenu] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const { success, error } = useToast();
+
+  async function apply(action: StatusAction) {
+    setMenu(false);
+    setBusy(true);
+    try {
+      const res = await fetch("/api/shopify/orders/status", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ shopifyId: order.shopifyId, action }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.error ?? "فشل تحديث الحالة");
+      // same tag rules as the API (confirming also clears "postponed")
+      const drop = ["confirmed", "waiting", "cancelled", "ملغي", ...(action === "confirm" ? ["postponed"] : [])];
+      const keep = order.tags.filter((t) => !drop.includes(t.toLowerCase()));
+      const tag = STATUS_TAG[action];
+      onChange(tag ? [...keep, tag] : keep);
+      success("تم التحديث", "اتغيرت حالة الطلب");
+    } catch (err) {
+      error("خطأ", String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const items: { action: StatusAction; text: string; icon: React.ReactNode; cls: string }[] = [
+    { action: "unconfirm", text: "جديد",   icon: <RotateCcw size={13} />,    cls: "text-[var(--warning-text)]" },
+    { action: "wait",      text: "انتظار", icon: <Clock size={13} />,        cls: "text-[var(--info)]" },
+    { action: "confirm",   text: "مكتمل",  icon: <CheckCircle2 size={13} />, cls: "text-[var(--success)]" },
+    { action: "cancel",    text: "ملغي",   icon: <XCircle size={13} />,      cls: "text-[var(--danger)]" },
+  ];
+  return (
+    <div className="relative inline-block">
+      <button onClick={() => setMenu(!menu)} disabled={busy} className="flex items-center gap-1" title="تغيير الحالة">
+        <Badge variant={variant}>
+          {busy && <Loader2 size={11} className="inline animate-spin ml-1" />}
+          {label}
+        </Badge>
+        <ChevronDown size={12} className="text-[var(--text-muted)]" />
+      </button>
+      {menu && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setMenu(false)} />
+          <div className="absolute z-20 top-full mt-1 right-0 flex flex-col bg-[var(--bg-card)] border border-[var(--border-color)] rounded-md shadow-lg overflow-hidden min-w-[120px]">
+            {items.map((it) => (
+              <button key={it.action} onClick={() => apply(it.action)}
+                className={`flex items-center gap-2 px-3 py-2 text-xs hover:bg-[var(--bg-base)] transition-colors whitespace-nowrap ${it.cls}`}>
+                {it.icon} {it.text}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function OrderDetailsClient({ order: initialOrder }: OrderDetailsClientProps) {
   const [order,          setOrder]          = useState(initialOrder);
   const [editOpen,       setEditOpen]       = useState(false);
@@ -523,7 +594,12 @@ export function OrderDetailsClient({ order: initialOrder }: OrderDetailsClientPr
           <div>
             <div className="flex items-center gap-3 flex-wrap mb-2">
               <h1 className="text-page-title">{order.orderNumber}</h1>
-              <Badge variant={st.variant}>{st.label}</Badge>
+              {open ? (
+                <StatusMenu order={order} label={st.label} variant={st.variant}
+                  onChange={(tags) => setOrder((o) => ({ ...o, tags }))} />
+              ) : (
+                <Badge variant={st.variant}>{st.label}</Badge>
+              )}
               <Badge variant={pm.variant}>{pm.label}</Badge>
             </div>
             <p className="text-small">{formatDate(order.createdAt)}</p>
