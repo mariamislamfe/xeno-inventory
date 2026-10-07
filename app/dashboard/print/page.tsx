@@ -6,7 +6,7 @@ import { Printer, Loader2, RefreshCw, Search, CheckCircle2, Eye } from "lucide-r
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useToast } from "@/components/ui/Toast";
-import { printOrderLabel } from "@/lib/print-label";
+import { printOrderLabel, printOrderLabels } from "@/lib/print-label";
 
 // Shipped orders waiting for their J&T waybill to be printed. Printing goes through
 // J&T's print API, which is what moves the order to "Printed" on the J&T side.
@@ -34,6 +34,8 @@ export default function PrintPage() {
   const [loading,    setLoading]    = useState(true);
   const [search,     setSearch]     = useState("");
   const [printingId, setPrintingId] = useState<number | null>(null);
+  const [selected,   setSelected]   = useState<Set<string>>(new Set());
+  const [bulk,       setBulk]       = useState<{ done: number; total: number } | null>(null);
   const { success, error } = useToast();
 
   async function fetchRows(t: Tab): Promise<PrintRow[]> {
@@ -45,6 +47,7 @@ export default function PrintPage() {
 
   function reload(t: Tab) {
     setLoading(true);
+    setSelected(new Set());
     fetchRows(t)
       .then(setRows)
       .catch((err) => { error("خطأ", String(err)); setRows([]); })
@@ -71,6 +74,35 @@ export default function PrintPage() {
       await printOrderLabel(row.shopify_order_id, { preview: true });
     } catch (err) {
       error("فشل المعاينة", err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  // Selected rows (or all shown rows) in one print job
+  const selectedRows = filtered.filter((r) => selected.has(r.id));
+  function toggle(id: string) {
+    setSelected((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  }
+  function toggleAll() {
+    setSelected(selectedRows.length === filtered.length ? new Set() : new Set(filtered.map((r) => r.id)));
+  }
+  async function printMany(list: PrintRow[]) {
+    if (!list.length) return;
+    setBulk({ done: 0, total: list.length });
+    try {
+      const { printed, failed } = await printOrderLabels(
+        list.map((r) => r.shopify_order_id),
+        (done, total) => setBulk({ done, total }),
+      );
+      const ok = new Set(printed);
+      if (tab === "pending") setRows((prev) => prev.filter((r) => !ok.has(r.shopify_order_id)));
+      setSelected(new Set(list.filter((r) => !ok.has(r.shopify_order_id)).map((r) => r.id)));
+      if (printed.length) success("تمت الطباعة", `${printed.length} بوليصة — اتنقلوا لـ Printed على J&T`);
+      if (failed.length) {
+        const nums = failed.slice(0, 3).map((f) => list.find((r) => r.shopify_order_id === f.id)?.order_number).join("، ");
+        error(`فشل ${failed.length} بوليصة`, `${nums}${failed.length > 3 ? " ..." : ""} — ${failed[0].error.slice(0, 120)}`);
+      }
+    } finally {
+      setBulk(null);
     }
   }
 
@@ -112,6 +144,17 @@ export default function PrintPage() {
             {label}{tab === key && !loading ? ` (${rows.length})` : ""}
           </button>
         ))}
+        {filtered.length > 0 && (
+          <Button size="sm" variant="primary" disabled={bulk !== null || printingId !== null}
+            icon={bulk ? <Loader2 size={13} className="animate-spin" /> : <Printer size={13} />}
+            onClick={() => printMany(selectedRows.length ? selectedRows : filtered)}>
+            {bulk
+              ? `جارٍ جلب البوالص ${bulk.done} / ${bulk.total}`
+              : selectedRows.length
+                ? `طباعة المحدد (${selectedRows.length})`
+                : `طباعة الكل (${filtered.length})`}
+          </Button>
+        )}
         <div className="relative mr-auto w-full sm:w-64">
           <Search size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
           <input value={search} onChange={(e) => setSearch(e.target.value)}
@@ -136,6 +179,11 @@ export default function PrintPage() {
             <table className="data-table">
               <thead>
                 <tr>
+                  <th className="w-10 text-center">
+                    <input type="checkbox" className="rounded" disabled={bulk !== null}
+                      checked={filtered.length > 0 && selectedRows.length === filtered.length}
+                      onChange={toggleAll} />
+                  </th>
                   <th>رقم الطلب</th>
                   <th>العميل</th>
                   <th>الهاتف</th>
@@ -146,7 +194,11 @@ export default function PrintPage() {
               </thead>
               <tbody>
                 {filtered.map((r) => (
-                  <tr key={r.id}>
+                  <tr key={r.id} className={selected.has(r.id) ? "bg-(--primary-light)" : ""}>
+                    <td className="text-center">
+                      <input type="checkbox" className="rounded" disabled={bulk !== null}
+                        checked={selected.has(r.id)} onChange={() => toggle(r.id)} />
+                    </td>
                     <td>
                       <Link href={`/dashboard/orders/${r.shopify_order_id}`}
                         className="text-xs font-bold text-[var(--primary)] hover:underline">

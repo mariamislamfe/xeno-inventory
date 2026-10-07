@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { normalizeOrder } from "@/lib/shopify/orders";
 import type { ShopifyOrderRaw } from "@/lib/shopify/orders";
 import { toE164 } from "@/lib/phone";
+import { supabaseAdmin } from "@/lib/supabase/client";
 
 const SHOP    = process.env.SHOPIFY_SHOP!;
 const TOKEN   = process.env.SHOPIFY_ACCESS_TOKEN!;
@@ -47,6 +48,16 @@ export async function POST(req: NextRequest) {
     const anyFulfilled = orders.some(o => o.fulfillment_status === "fulfilled" || o.cancelled_at);
     if (anyFulfilled) {
       return NextResponse.json({ error: "لا يمكن دمج طلب مكتمل أو ملغي" }, { status: 422 });
+    }
+
+    // Guard: an order already sent to J&T must not be merged — merging deletes it
+    const { data: shipped } = await supabaseAdmin
+      .from("shipments")
+      .select("order_number")
+      .in("shopify_order_id", shopifyIds)
+      .not("tracking_number", "is", null);
+    if (shipped?.length) {
+      return NextResponse.json({ error: `لا يمكن دمج طلب اتشحن بالفعل (${shipped.map((s) => s.order_number).join("، ")})` }, { status: 422 });
     }
 
     // Merge line items: sum quantities for same variant_id, append distinct ones

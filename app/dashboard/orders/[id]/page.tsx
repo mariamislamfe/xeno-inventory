@@ -30,5 +30,6 @@ export default async function OrderPage({ params }: OrderPageProps) {
     notFound();
   }
 
-  return <OrderDetailsClient order={order} />;
+  // key: a fresh client state when stepping to another order with the arrows
+  return <OrderDetailsClient key={order.shopifyId} order={order} />;
 }
