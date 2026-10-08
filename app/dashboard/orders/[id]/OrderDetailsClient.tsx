@@ -16,6 +16,7 @@ import { useToast } from "@/components/ui/Toast";
 import type { XenoOrder } from "@/lib/shopify/orders";
 import { ShipModal } from "@/components/orders/ShipModal";
 import { neighboursFromList } from "@/lib/order-nav";
+import { reviewStatus, withStatus, type ReviewStatus } from "@/lib/order-status";
 import { printOrderLabel } from "@/lib/print-label";
 import type { AddressValue } from "@/components/orders/AddressPicker";
 
@@ -487,7 +488,7 @@ function OrderStepper({ order }: { order: XenoOrder }) {
 // Status menu (same four statuses as the orders list). All are tags, so any of
 // them can be changed again later.
 type StatusAction = "unconfirm" | "wait" | "confirm" | "cancel";
-const STATUS_TAG: Record<StatusAction, string | null> = { unconfirm: null, wait: "waiting", confirm: "confirmed", cancel: "cancelled" };
+const ACTION_STATUS: Record<StatusAction, ReviewStatus> = { unconfirm: "new", wait: "waiting", confirm: "confirmed", cancel: "cancelled" };
 
 function StatusMenu({ order, label, variant, onChange }: {
   order: XenoOrder;
@@ -510,11 +511,7 @@ function StatusMenu({ order, label, variant, onChange }: {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data.error) throw new Error(data.error ?? "فشل تحديث الحالة");
-      // same tag rules as the API (confirming also clears "postponed")
-      const drop = ["confirmed", "waiting", "cancelled", "ملغي", ...(action === "confirm" ? ["postponed"] : [])];
-      const keep = order.tags.filter((t) => !drop.includes(t.toLowerCase()));
-      const tag = STATUS_TAG[action];
-      onChange(tag ? [...keep, tag] : keep);
+      onChange(withStatus(order.tags, ACTION_STATUS[action]));
       success("تم التحديث", "اتغيرت حالة الطلب");
     } catch (err) {
       error("خطأ", String(err));
@@ -564,13 +561,12 @@ export function OrderDetailsClient({ order: initialOrder }: OrderDetailsClientPr
 
   // "مكتمل" = confirmed (tag), still waiting to be shipped
   const open      = order.status !== "cancelled";   // editable unless cancelled in Shopify itself
-  const confirmed = order.tags.some((t) => t.toLowerCase() === "confirmed");
-  const waiting   = order.tags.some((t) => t.toLowerCase() === "waiting");
-  const cancelTag = order.tags.some((t) => ["cancelled", "ملغي"].includes(t.toLowerCase()));
-  const st = open && cancelTag ? { label: "ملغي", variant: "danger" as const }
-    : open && confirmed ? { label: "مكتمل", variant: "success" as const }
-    : open && waiting ? { label: "انتظار", variant: "info" as const }
-    : STATUS_DISPLAY[order.status] ?? { label: order.status, variant: "neutral" as const };
+  const review    = reviewStatus(order.tags);
+  const cancelTag = review === "cancelled";
+  const st = open
+    ? ({ new: { label: "جديد", variant: "warning" as const }, waiting: { label: "انتظار", variant: "info" as const },
+         confirmed: { label: "مكتمل", variant: "success" as const }, cancelled: { label: "ملغي", variant: "danger" as const } })[review]
+    : STATUS_DISPLAY.cancelled;
   const pm = PAYMENT_DISPLAY[order.paymentStatus] ?? { label: order.paymentStatus, variant: "neutral" as const };
 
   const canShip = !order.trackingNumber && order.status !== "cancelled" && !cancelTag;

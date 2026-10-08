@@ -3,6 +3,7 @@ import { normalizeOrder } from "@/lib/shopify/orders";
 import type { ShopifyOrderRaw } from "@/lib/shopify/orders";
 import { toE164 } from "@/lib/phone";
 import { supabaseAdmin } from "@/lib/supabase/client";
+import { isStatusTag } from "@/lib/order-status";
 
 const SHOP    = process.env.SHOPIFY_SHOP!;
 const TOKEN   = process.env.SHOPIFY_ACCESS_TOKEN!;
@@ -162,9 +163,10 @@ async function mergeOrders(shopifyIds: number[]) {
     const notes = orders.map(o => o.note).filter(Boolean).join(" | ");
 
     // Combine tags
+    // The merged order is a fresh order to review → no dashboard status tag
     const tags = [...new Set(
       orders.flatMap(o => o.tags ? o.tags.split(",").map(t => t.trim()) : [])
-    )].filter(Boolean).join(",");
+    )].filter((t) => t && !isStatusTag(t)).join(",");
 
     const newOrderPayload = {
       email:            base.email,
