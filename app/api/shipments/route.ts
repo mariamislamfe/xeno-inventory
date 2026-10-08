@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/client";
+import { fillMissingShipmentInfo } from "@/lib/shipments";
 
 export const revalidate = 0;
 
@@ -36,7 +37,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ shipments: data ?? [] });
+    // Older shipments were saved without the COD amount / city — fill them in
+    return NextResponse.json({ shipments: await fillMissingShipmentInfo(data ?? []) });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }
