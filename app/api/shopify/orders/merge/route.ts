@@ -31,12 +31,70 @@ async function removeOrder(id: number): Promise<boolean> {
 
 // POST /api/shopify/orders/merge
 // Body: { shopifyIds: number[] }  — must be 2+ unfulfilled orders from same customer
+// ── Merge lock ───────────────────────────────────────────────────────────────
+// Several dashboards can try to auto-merge the same duplicates at once, which would
+// create two merged orders. Each original is claimed with a row in xeno_ops
+// (UNIQUE shopify_order_id) keyed by the negated order id: one multi-row insert,
+// so it either claims every original or fails as a whole.
+const LOCK_STATUS = "merge_lock";
+const LOCK_TTL_MS = 2 * 60 * 1000;   // a crashed merge frees its originals after 2 min
+
+function lockRows(ids: number[]) {
+  return ids.map((id) => ({ shopify_order_id: -id, order_number: `merge-lock ${id}`, op_status: LOCK_STATUS }));
+}
+
+async function acquireMergeLock(ids: number[]): Promise<boolean> {
+  const first = await supabaseAdmin.from("xeno_ops").insert(lockRows(ids));
+  if (!first.error) return true;
+  if (first.error.code !== "23505") throw new Error(`merge lock: ${first.error.message}`);
+  // Taken: clear locks left by a merge that died, then try once more
+  await supabaseAdmin.from("xeno_ops")
+    .delete()
+    .in("shopify_order_id", ids.map((id) => -id))
+    .eq("op_status", LOCK_STATUS)
+    .lt("created_at", new Date(Date.now() - LOCK_TTL_MS).toISOString());
+  const retry = await supabaseAdmin.from("xeno_ops").insert(lockRows(ids));
+  return !retry.error;
+}
+
+async function releaseMergeLock(ids: number[]) {
+  await supabaseAdmin.from("xeno_ops")
+    .delete()
+    .in("shopify_order_id", ids.map((id) => -id))
+    .eq("op_status", LOCK_STATUS);
+}
+
 export async function POST(req: NextRequest) {
+  let shopifyIds: number[];
   try {
-    const { shopifyIds } = await req.json() as { shopifyIds: number[] };
-    if (!shopifyIds || shopifyIds.length < 2) {
-      return NextResponse.json({ error: "يلزم طلبان على الأقل" }, { status: 400 });
+    ({ shopifyIds } = await req.json() as { shopifyIds: number[] });
+  } catch {
+    return NextResponse.json({ error: "طلب غير صالح" }, { status: 400 });
+  }
+  if (!Array.isArray(shopifyIds) || shopifyIds.length < 2) {
+    return NextResponse.json({ error: "يلزم طلبان على الأقل" }, { status: 400 });
+  }
+  const ids = [...new Set(shopifyIds.map(Number))];
+  if (ids.length < 2 || ids.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
+    return NextResponse.json({ error: "أرقام طلبات غير صالحة" }, { status: 400 });
+  }
+
+  try {
+    if (!(await acquireMergeLock(ids))) {
+      return NextResponse.json({ error: "الطلبات دي بيتم دمجها دلوقتي من جهاز تاني" }, { status: 409 });
     }
+  } catch (err) {
+    return NextResponse.json({ error: String(err) }, { status: 500 });
+  }
+  try {
+    return await mergeOrders(ids);
+  } finally {
+    await releaseMergeLock(ids);
+  }
+}
+
+async function mergeOrders(shopifyIds: number[]) {
+  try {
 
     // Fetch full order details for all
     const orders = (await Promise.all(shopifyIds.map(getOrder))).filter(Boolean) as ShopifyOrderRaw[];

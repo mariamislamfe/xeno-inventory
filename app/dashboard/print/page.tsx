@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Printer, Loader2, RefreshCw, Search, CheckCircle2, Eye } from "lucide-react";
+import { Printer, Loader2, RefreshCw, Search, CheckCircle2, Eye, CalendarDays, Package, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useToast } from "@/components/ui/Toast";
@@ -20,7 +20,21 @@ interface PrintRow {
   city:             string | null;
   governorate:      string | null;
   created_at:       string;
+  items:            { sku: string; name: string; variant: string; qty: number }[];
 }
+
+// Day the order was shipped, in the viewer's local time (YYYY-MM-DD)
+function localDay(iso: string) {
+  return new Date(iso).toLocaleDateString("en-CA");
+}
+function dayLabel(day: string) {
+  const today = localDay(new Date().toISOString());
+  const y = new Date(); y.setDate(y.getDate() - 1);
+  if (day === today) return "النهارده";
+  if (day === localDay(y.toISOString())) return "امبارح";
+  return new Date(day + "T12:00:00").toLocaleDateString("ar-EG", { weekday: "short", day: "numeric", month: "short" });
+}
+const skuKey = (s: string) => s.trim().toUpperCase();
 
 type Tab = "pending" | "printed";
 
@@ -36,6 +50,8 @@ export default function PrintPage() {
   const [printingId, setPrintingId] = useState<number | null>(null);
   const [selected,   setSelected]   = useState<Set<string>>(new Set());
   const [bulk,       setBulk]       = useState<{ done: number; total: number } | null>(null);
+  const [day,        setDay]        = useState("");   // "" = all days
+  const [sku,        setSku]        = useState("");   // "" = all products
   const { success, error } = useToast();
 
   async function fetchRows(t: Tab): Promise<PrintRow[]> {
@@ -61,12 +77,46 @@ export default function PrintPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  // Days that have shipments, newest first, with counts (quick-pick chips)
+  const days = useMemo(() => {
+    const m = new Map<string, number>();
+    rows.forEach((r) => { const d = localDay(r.created_at); m.set(d, (m.get(d) ?? 0) + 1); });
+    return [...m.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+  }, [rows]);
+
+  // SKUs in the current list (for the suggestions), counted in pieces
+  const skus = useMemo(() => {
+    const m = new Map<string, { label: string; pieces: number }>();
+    rows.forEach((r) => r.items.forEach((i) => {
+      if (!i.sku.trim()) return;
+      const k = skuKey(i.sku);
+      const cur = m.get(k) ?? { label: `${i.sku.trim()} — ${i.name}`, pieces: 0 };
+      cur.pieces += i.qty;
+      m.set(k, cur);
+    }));
+    return [...m.entries()].sort((a, b) => b[1].pieces - a[1].pieces);
+  }, [rows]);
+
+  const skuQuery = skuKey(sku);
+  // exact SKU when it's one we know (NK2 shouldn't also pick NK20), else partial
+  const skuExact = skuQuery !== "" && skus.some(([k]) => k === skuQuery);
+  function hasSku(r: PrintRow) {
+    return r.items.some((i) => skuExact ? skuKey(i.sku) === skuQuery : skuKey(i.sku).includes(skuQuery));
+  }
+
   const filtered = useMemo(() => {
     const q = search.trim();
-    if (!q) return rows;
     return rows.filter((r) =>
-      [r.order_number, r.tracking_number, r.customer_name, r.phone].some((v) => v?.includes(q)));
-  }, [rows, search]);
+      (!day || localDay(r.created_at) === day) &&
+      (!skuQuery || hasSku(r)) &&
+      (!q || [r.order_number, r.tracking_number, r.customer_name, r.phone].some((v) => v?.includes(q))));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, search, day, skuQuery, skuExact]);
+
+  // Pieces of the chosen SKU across the filtered orders
+  const skuPieces = skuQuery
+    ? filtered.reduce((n, r) => n + r.items.filter((i) => skuExact ? skuKey(i.sku) === skuQuery : skuKey(i.sku).includes(skuQuery)).reduce((a, i) => a + i.qty, 0), 0)
+    : 0;
 
   // Already-printed labels only: shows it on screen, nothing is printed or recorded
   async function previewLabel(row: PrintRow) {
@@ -162,6 +212,47 @@ export default function PrintPage() {
         </div>
       </div>
 
+      {/* Day + product filters — "طباعة الكل" prints exactly what's shown */}
+      <div className="card p-3 space-y-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <CalendarDays size={15} className="text-[var(--text-muted)]" />
+          <span className="text-xs font-semibold text-[var(--text-secondary)]">اليوم:</span>
+          <button onClick={() => setDay("")}
+            className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-colors ${!day ? "bg-[var(--primary)] text-white" : "bg-[var(--bg-base)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"}`}>
+            كل الأيام
+          </button>
+          {days.slice(0, 8).map(([d, n]) => (
+            <button key={d} onClick={() => setDay(day === d ? "" : d)}
+              className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-colors ${day === d ? "bg-[var(--primary)] text-white" : "bg-[var(--bg-base)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"}`}>
+              {dayLabel(d)} ({n})
+            </button>
+          ))}
+          <input type="date" value={day} onChange={(e) => setDay(e.target.value)}
+            className="form-input w-auto py-1 text-xs" title="اختار يوم من الكالندر" />
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Package size={15} className="text-[var(--text-muted)]" />
+          <span className="text-xs font-semibold text-[var(--text-secondary)]">المنتج (SKU):</span>
+          <div className="relative w-full sm:w-72">
+            <input value={sku} onChange={(e) => setSku(e.target.value)} list="print-skus"
+              className="form-input py-1 text-xs pl-8" placeholder="اكتب أو اختار الكود — مثلاً NK2" dir="ltr" />
+            {sku && (
+              <button onClick={() => setSku("")} className="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--danger)]" title="مسح">
+                <X size={13} />
+              </button>
+            )}
+            <datalist id="print-skus">
+              {skus.map(([k, v]) => <option key={k} value={k}>{v.label} ({v.pieces} قطعة)</option>)}
+            </datalist>
+          </div>
+          {skuQuery && (
+            <span className="text-xs text-[var(--text-secondary)]">
+              {filtered.length} طلب — {skuPieces} قطعة {skuExact ? "" : "(بحث جزئي)"}
+            </span>
+          )}
+        </div>
+      </div>
+
       <div className="card">
         {loading ? (
           <div className="flex items-center justify-center gap-3 p-16">
@@ -171,7 +262,7 @@ export default function PrintPage() {
         ) : filtered.length === 0 ? (
           <EmptyState
             icon={tab === "pending" ? <CheckCircle2 size={28} /> : <Printer size={28} />}
-            title={tab === "pending" ? "مفيش بوالص مستنية طباعة" : "لا توجد بوالص مطبوعة"}
+            title={rows.length && (day || sku) ? "مفيش طلبات بالفلتر ده" : tab === "pending" ? "مفيش بوالص مستنية طباعة" : "لا توجد بوالص مطبوعة"}
             description={tab === "pending" ? "أي طلب يتشحن على J&T هيظهر هنا لحد ما تطبعي البوليصة" : ""}
           />
         ) : (
@@ -187,6 +278,7 @@ export default function PrintPage() {
                   <th>رقم الطلب</th>
                   <th>العميل</th>
                   <th>الهاتف</th>
+                  <th>المنتجات</th>
                   <th>رقم التتبع</th>
                   <th>تاريخ الشحن</th>
                   <th className="text-center">البوليصة</th>
@@ -207,6 +299,11 @@ export default function PrintPage() {
                     </td>
                     <td className="text-xs">{r.customer_name ?? "—"}</td>
                     <td className="text-xs" dir="ltr">{r.phone ?? "—"}</td>
+                    <td className="text-[11px] whitespace-nowrap" dir="ltr">
+                      {r.items.length
+                        ? r.items.map((i) => `${i.sku || i.name} ×${i.qty}`).join("، ")
+                        : <span className="text-[var(--text-muted)]">—</span>}
+                    </td>
                     <td><span className="font-mono text-xs font-semibold">{r.tracking_number}</span></td>
                     <td><span className="text-[11px] text-[var(--text-muted)] whitespace-nowrap">{formatDate(r.created_at)}</span></td>
                     <td className="text-center">
