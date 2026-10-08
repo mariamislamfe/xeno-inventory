@@ -118,6 +118,9 @@ export interface JTOrderInput {
   totalAmount:  number;
   note?:        string;
   weightKg?:    number;
+  // Our order id at J&T; defaults to the order number. A re-ship after a cancelled
+  // shipment needs a new one ("53902-2") because J&T won't reuse an id.
+  txlogisticId?: string;
 }
 
 export interface JTOrderResult {
@@ -136,7 +139,7 @@ export interface JTOrderResult {
  */
 export function buildAddOrderBiz(order: JTOrderInput): { ok: true; biz: Record<string, unknown>; areaGuessed: boolean } | { ok: false; error: string } {
   // Shopify order names include "#" prefix (e.g. "#1001") — strip it for J&T
-  const txlogisticId = (order.orderNumber ?? "").replace(/^#/, "").trim();
+  const txlogisticId = (order.txlogisticId ?? order.orderNumber ?? "").replace(/^#/, "").trim();
   if (!txlogisticId) {
     return { ok: false, error: `رقم الطلب فارغ أو غير صالح: "${order.orderNumber}"` };
   }
@@ -272,18 +275,70 @@ export async function getJTTracking(trackingNumber: string) {
 
 // ── Cancel Order ──────────────────────────────────────────────────────────────
 
-// txlogisticId as sent to addOrder (the order number without "#")
-export async function cancelJTOrder(txlogisticId: string) {
+// txlogisticId as sent to addOrder (the order number without "#", or "53902-2")
+export async function cancelJTOrder(txlogisticId: string, reason = "Customer cancelled the order") {
   try {
     const data = await jtPost("/api/order/cancelOrder", {
       customerCode: CUSTOMER_CODE,
       digest:       bizDigest(),
       txlogisticId,
+      reason:       reason.slice(0, 50),
     });
     return { ok: true, data };
   } catch (err) {
     return { ok: false, error: String(err) };
   }
+}
+
+/** Our order id (txlogisticId) at J&T for a waybill — "checking order", command 2. */
+export async function getJTOrderIdByWaybill(billCode: string): Promise<string | null> {
+  try {
+    const data = await jtPost("/api/order/getOrders", {
+      customerCode: CUSTOMER_CODE,
+      digest:       bizDigest(),
+      command:      2,
+      serialNumber: [billCode],
+    });
+    const row = Array.isArray(data?.data) ? data.data[0] : null;
+    return row?.txlogisticId ? String(row.txlogisticId) : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface JTScan { scanTime: string; scanType?: string; scanTypeName?: string; scanTypeCode?: string; desc?: string }
+
+/** Tracking history for up to 30 waybills per call → billCode → scans. */
+export async function traceJTBatch(billCodes: string[]): Promise<Map<string, JTScan[]>> {
+  const out = new Map<string, JTScan[]>();
+  for (let i = 0; i < billCodes.length; i += 30) {
+    const chunk = billCodes.slice(i, i + 30);
+    try {
+      const data = await jtPost("/api/logistics/trace", { billCodes: chunk.join(",") });
+      for (const row of (Array.isArray(data?.data) ? data.data : []) as { billCode: string; details?: JTScan[] }[]) {
+        out.set(String(row.billCode), row.details ?? []);
+      }
+    } catch { /* leave this chunk unsynced */ }
+  }
+  return out;
+}
+
+/**
+ * Shipment status from J&T's latest scan. Scan codes differ between J&T countries,
+ * so this goes by the scan name ("Pickup scan", "Delivery scan", "Signing scan",
+ * "Return scan", "Problem…"). No scans yet = still waiting for pickup.
+ */
+export function statusFromScans(scans: JTScan[]):
+  "pending" | "picked_up" | "in_transit" | "out_for_delivery" | "delivered" | "returned" | "failed" {
+  if (!scans.length) return "pending";
+  const latest = [...scans].sort((a, b) => String(b.scanTime).localeCompare(String(a.scanTime)))[0];
+  const t = `${latest.scanType ?? ""} ${latest.scanTypeName ?? ""}`.toLowerCase();
+  if (/return/.test(t))                         return "returned";
+  if (/sign/.test(t))                           return "delivered";
+  if (/problem|abnormal|exception/.test(t))     return "failed";
+  if (/deliver|dispatch/.test(t))               return "out_for_delivery";
+  if (/pick ?up|collect/.test(t))               return "picked_up";
+  return "in_transit";
 }
 
 // ── Print Waybill ─────────────────────────────────────────────────────────────

@@ -40,8 +40,18 @@ export async function POST(req: NextRequest) {
       .contains("metadata", { results: [{ order_number: o.order_number, ok: true }] })
       .order("created_at", { ascending: false })
       .limit(1);
-    const prevTracking = (logged?.[0]?.metadata as { results?: { order_number: string; trackingNumber?: string }[] } | undefined)
+    let prevTracking = (logged?.[0]?.metadata as { results?: { order_number: string; trackingNumber?: string }[] } | undefined)
       ?.results?.find((r) => r.order_number === o.order_number && r.trackingNumber)?.trackingNumber;
+
+    // …unless that shipment was cancelled on J&T since (then it's a real re-ship)
+    const { data: cancels } = await supabaseAdmin
+      .from("activity_log")
+      .select("metadata")
+      .eq("type", "shipment")
+      .eq("action", "cancelled")
+      .contains("metadata", { order_number: o.order_number });
+    const cancelledTracking = new Set((cancels ?? []).map((c) => (c.metadata as { tracking_number?: string })?.tracking_number));
+    if (prevTracking && cancelledTracking.has(prevTracking)) prevTracking = undefined;
 
     if (prevTracking) {
       await saveShipment({
@@ -50,7 +60,7 @@ export async function POST(req: NextRequest) {
         customer_name:    o.customer_name,
         phone:            o.phone,
         provider:         "J&T Express",
-        status:           "picked_up",
+        status:           "pending",
         tracking_number:  prevTracking,
       });
       results.push({
@@ -77,7 +87,13 @@ export async function POST(req: NextRequest) {
       ?? shopifyOrder?.items
       ?? [{ name: "منتج", qty: 1 }];
 
+    // J&T won't reuse an order id, so a re-ship after a cancelled shipment gets "53902-2"
+    const orderNo      = String(o.order_number ?? "").replace(/^#/, "").trim();
+    const attempt      = (cancels?.length ?? 0) + 1;
+    const txlogisticId = attempt > 1 ? `${orderNo}-${attempt}` : orderNo;
+
     const jtResult = await createJTOrder({
+      txlogisticId,
       orderNumber:  o.order_number,
       // FIX-2: Use fresh Shopify data for customer name and phone
       customerName: shopifyOrder?.customerName ?? o.customer_name,
@@ -97,8 +113,13 @@ export async function POST(req: NextRequest) {
       customer_name:    shopifyOrder?.customerName ?? o.customer_name,
       phone:            shopifyOrder?.phone        ?? o.phone,
       provider:         "J&T Express",
-      status:           jtResult.ok && jtResult.trackingNumber ? "picked_up" : "pending",
+      status:           "pending",   // J&T hasn't picked it up yet — the status sync moves it on
       tracking_number:  jtResult.trackingNumber ?? null,
+      cod_amount:       shopifyOrder?.total ?? o.total ?? null,
+      address:          shopifyOrder?.address1 ?? o.address ?? null,
+      city:             shopifyOrder?.city ?? o.city ?? null,
+      governorate:      shopifyOrder?.province ?? o.governorate ?? null,
+      notes:            txlogisticId,
     });
     if (saveErr) console.error("[ship] shipments save error:", o.order_number, saveErr);
 

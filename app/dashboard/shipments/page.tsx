@@ -2,7 +2,10 @@
 
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { Truck, Package, CheckCircle, RotateCcw, Eye, Clock, Loader2, AlertCircle } from "lucide-react";
+import { Truck, Package, CheckCircle, RotateCcw, Eye, Clock, Loader2, AlertCircle, RefreshCw, XCircle } from "lucide-react";
+import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
+import { useToast } from "@/components/ui/Toast";
 import { SearchInput, Select } from "@/components/ui/Input";
 import { Pagination } from "@/components/ui/Pagination";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -65,6 +68,10 @@ export default function ShipmentsPage() {
   const [search,       setSearch]       = useState("");
   const [statusFilter, setStatusFilter] = useState<DbShipmentStatus | "">("");
   const [page, setPage] = useState(1);
+  const [syncing,    setSyncing]    = useState(false);
+  const [cancelRow,  setCancelRow]  = useState<DbShipment | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const { success, error: toastError } = useToast();
 
   const fetchShipments = useCallback(async () => {
     setLoading(true);
@@ -88,7 +95,46 @@ export default function ShipmentsPage() {
     }
   }, []);
 
-  useEffect(() => { fetchShipments(); }, [fetchShipments]);
+  // Statuses come from J&T tracking: sync (shipments not checked in the last 10 min),
+  // then reload. force = re-check everything that isn't delivered/returned.
+  const syncFromJT = useCallback(async (force: boolean) => {
+    setSyncing(true);
+    try {
+      const res  = await fetch(`/api/shipments/sync${force ? "?force=1" : ""}`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (force) {
+        if (!res.ok || data.error) toastError("تعذر التحديث من J&T", data.error ?? "");
+        else success("تم التحديث من J&T", `اتراجعت ${data.checked} شحنة — ${data.updated} حالتها اتغيرت`);
+      }
+    } catch { /* keep showing the saved statuses */ }
+    finally { setSyncing(false); }
+    await fetchShipments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchShipments]);
+
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { fetchShipments(); syncFromJT(false); }, [fetchShipments, syncFromJT]);
+
+  async function cancelShipment() {
+    if (!cancelRow) return;
+    setCancelling(true);
+    try {
+      const res  = await fetch("/api/shipments/cancel", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ shopify_order_id: cancelRow.shopify_order_id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "فشل الإلغاء");
+      setShipments((prev) => prev.filter((x) => x.id !== cancelRow.id));
+      success("اتلغت الشحنة على J&T", `${cancelRow.order_number} — الطلب ممكن يتشحن تاني`);
+      setCancelRow(null);
+    } catch (err) {
+      toastError("فشل إلغاء الشحنة", err instanceof Error ? err.message : String(err));
+    } finally {
+      setCancelling(false);
+    }
+  }
 
   const filtered = useMemo(() => {
     let data = [...shipments];
@@ -118,9 +164,31 @@ export default function ShipmentsPage() {
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-page-title">الشحنات</h1>
-          <p className="text-small mt-0.5">متابعة وإدارة الشحنات</p>
+          <p className="text-small mt-0.5">الحالات بتتحدث من تتبع J&T</p>
         </div>
+        <Button variant="secondary" size="sm" disabled={syncing || loading}
+          icon={syncing ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={14} />}
+          onClick={() => syncFromJT(true)}>
+          {syncing ? "جارٍ التحديث من J&T..." : "تحديث الحالات من J&T"}
+        </Button>
       </div>
+
+      {/* Cancel a J&T shipment */}
+      <Modal open={cancelRow !== null} onClose={() => !cancelling && setCancelRow(null)}
+        title={cancelRow ? `إلغاء شحنة ${cancelRow.order_number}` : ""} size="sm"
+        footer={cancelRow && (
+          <>
+            <Button variant="secondary" onClick={() => setCancelRow(null)} disabled={cancelling}>رجوع</Button>
+            <Button variant="danger" onClick={cancelShipment} loading={cancelling} icon={<XCircle size={14} />}>
+              إلغاء الشحنة على J&T
+            </Button>
+          </>
+        )}>
+        <p className="text-sm text-[var(--text-secondary)] leading-relaxed">
+          هيتم إلغاء الشحنة {cancelRow?.tracking_number} على J&T، والطلب هيرجع من غير رقم تتبع
+          فتقدر تشحنه تاني بعدين. لو المندوب استلم الشحنة خلاص، J&T ممكن ترفض الإلغاء.
+        </p>
+      </Modal>
 
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -237,6 +305,12 @@ export default function ShipmentsPage() {
                           >
                             <Eye size={15} />
                           </Link>
+                          {s.tracking_number && s.status !== "delivered" && s.status !== "returned" && (
+                            <button onClick={() => setCancelRow(s)} title="إلغاء الشحنة على J&T"
+                              className="p-1.5 rounded-[var(--radius-sm)] text-[var(--text-muted)] hover:bg-[var(--danger-light)] hover:text-[var(--danger)] transition-colors inline-flex">
+                              <XCircle size={15} />
+                            </button>
+                          )}
                         </td>
                       </tr>
                     );

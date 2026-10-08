@@ -13,6 +13,7 @@ export async function GET(req: NextRequest) {
     let query = supabaseAdmin
       .from("shipments")
       .select("id, shopify_order_id, order_number, tracking_number, provider, status, customer_name, phone, city, governorate, cod_amount, created_at, shipped_at, delivered_at")
+      .not("tracking_number", "is", null)
       .order("created_at", { ascending: false })
       .limit(limit);
 
