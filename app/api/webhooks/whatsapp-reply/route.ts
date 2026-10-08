@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/client";
+import { withStatus } from "@/lib/order-status";
 
 export async function POST(req: NextRequest) {
   const secret = req.headers.get("x-wa-secret");
@@ -87,9 +88,7 @@ async function addShopifyNote(shopifyOrderId: number | string, newNote: string, 
     );
     const current = getRes.ok ? ((await getRes.json())?.order ?? {}) : {};
     const existingNote: string = current.note ?? "";
-    const tags = String(current.tags ?? "").split(",").map((t: string) => t.trim())
-      .filter((t: string) => t && !["confirmed", "waiting", "cancelled", "ملغي"].includes(t.toLowerCase()));
-    tags.push(statusTag);
+    const tags = withStatus(String(current.tags ?? "").split(","), statusTag);
 
     const combinedNote = existingNote
       ? `${existingNote}\n---\n${newNote}`

@@ -6,6 +6,7 @@ import dynamic from "next/dynamic";
 import { RefreshCw, Eye, Printer, Truck, Loader2, Search, ChevronDown, Tag, X, Plus, Save, CheckCircle2, XCircle, Trash2, RotateCcw, Clock } from "lucide-react";
 import type { AddressValue } from "@/components/orders/AddressPicker";
 import { phoneKey } from "@/lib/phone";
+import { reviewStatus, withStatus, type ReviewStatus } from "@/lib/order-status";
 import { GOV_EN } from "@/lib/shopify/provinces";
 import { ShipModal } from "@/components/orders/ShipModal";
 import { printOrderLabel } from "@/lib/print-label";
@@ -344,27 +345,23 @@ const STATUS_DISPLAY: Record<string, { label: string; variant: "success" | "warn
   returned:   { label: "مرتجع",  variant: "neutral" },
 };
 
-// "مكتمل" = reviewed and confirmed (the "confirmed" tag), not yet shipped
-function isConfirmed(o: XenoOrder) {
-  return o.tags.some((t) => t.toLowerCase() === "confirmed");
-}
-// "انتظار" = on hold (the "waiting" tag)
-function isWaiting(o: XenoOrder) {
-  return o.tags.some((t) => t.toLowerCase() === "waiting");
-}
-// "ملغي" from the dashboard = the "cancelled" tag (reversible), unlike a Shopify cancel
-function isCancelTagged(o: XenoOrder) {
-  return o.tags.some((t) => ["cancelled", "ملغي"].includes(t.toLowerCase()));
-}
-// Every order except one cancelled in Shopify itself can change status
+// Status = what the team set in the dashboard (lib/order-status). Shopify's own
+// state doesn't count: a Shopify "confirmed" tag or a fulfilled order is still جديد.
+// Only an order cancelled inside Shopify itself is final (Shopify can't undo it).
+const REVIEW_DISPLAY: Record<ReviewStatus, { label: string; variant: "success" | "warning" | "danger" | "info" | "neutral" }> = {
+  new:       { label: "جديد",   variant: "warning" },
+  waiting:   { label: "انتظار", variant: "info"    },
+  confirmed: { label: "مكتمل",  variant: "success" },
+  cancelled: { label: "ملغي",   variant: "danger"  },
+};
 function isEditable(o: XenoOrder) {
   return o.status !== "cancelled";
 }
 function statusDisplay(o: XenoOrder) {
-  if (isEditable(o) && isCancelTagged(o)) return { label: "ملغي",   variant: "danger" as const };
-  if (isEditable(o) && isConfirmed(o))    return { label: "مكتمل",  variant: "success" as const };
-  if (isEditable(o) && isWaiting(o))      return { label: "انتظار", variant: "info" as const };
-  return STATUS_DISPLAY[o.status] ?? { label: o.status, variant: "neutral" as const };
+  return isEditable(o) ? REVIEW_DISPLAY[reviewStatus(o.tags)] : STATUS_DISPLAY.cancelled;
+}
+function isCancelTagged(o: XenoOrder) {
+  return reviewStatus(o.tags) === "cancelled";
 }
 
 // ── Order actions (same action for one order or a whole selection) ─────
@@ -490,10 +487,10 @@ type TabKey = "any" | "cancelled" | "unfulfilled" | "waiting" | "confirmed" | "p
 
 const TABS: { key: TabKey; label: string; shopifyParam: Record<string, string> }[] = [
   { key: "any",         label: "الكل",        shopifyParam: { status: "any" } },
-  { key: "unfulfilled", label: "جديدة",       shopifyParam: { status: "open",   fulfillment_status: "unfulfilled" } },
-  { key: "waiting",     label: "⏳ انتظار",   shopifyParam: { status: "open",   tag: "waiting" } },
-  { key: "confirmed",   label: "✅ مكتملة",   shopifyParam: { status: "open",   tag: "confirmed" } },
-  { key: "cancelled",   label: "ملغية",       shopifyParam: { status: "any",    tag: "cancelled" } },
+  { key: "unfulfilled", label: "جديدة",       shopifyParam: { status: "open" } },
+  { key: "waiting",     label: "⏳ انتظار",   shopifyParam: { status: "any",    tag: "xeno-waiting" } },
+  { key: "confirmed",   label: "✅ مكتملة",   shopifyParam: { status: "any",    tag: "xeno-confirmed" } },
+  { key: "cancelled",   label: "ملغية",       shopifyParam: { status: "any",    tag: "xeno-cancelled" } },
   { key: "postponed",   label: "⏰ مؤجلة",    shopifyParam: { status: "any",    tag: "postponed" } },
 ];
 
@@ -586,12 +583,8 @@ export default function OrdersPage() {
     }
     setOrders((prev) => prev.map((o) => {
       if (!ids.has(o.id)) return o;
-      const review = o.tags.filter((t) => !["confirmed", "waiting", "cancelled", "ملغي"].includes(t.toLowerCase()));
-      if (action === "unconfirm") return { ...o, tags: review };
-      if (action === "wait")      return { ...o, tags: [...review, "waiting"] };
-      if (action === "cancel")    return { ...o, tags: [...review, "cancelled"] };
-      const tags = o.tags.filter((t) => !["cancelled", "postponed", "ملغي", "waiting"].includes(t.toLowerCase()));
-      return { ...o, tags: tags.includes("confirmed") ? tags : [...tags, "confirmed"] };
+      const next: ReviewStatus = action === "wait" ? "waiting" : action === "cancel" ? "cancelled" : action === "confirm" ? "confirmed" : "new";
+      return { ...o, tags: withStatus(o.tags, next) };
     }));
   }
 
@@ -685,7 +678,7 @@ export default function OrdersPage() {
       // Shopify can't exclude these in the query, so drop them here:
       // "جديدة" = not confirmed / waiting yet
       const list = data.orders as XenoOrder[];
-      setOrders(tab === "unfulfilled" ? list.filter((o) => !isConfirmed(o) && !isWaiting(o) && !isCancelTagged(o)) : list);
+      setOrders(tab === "unfulfilled" ? list.filter((o) => reviewStatus(o.tags) === "new") : list);
       setSelectedIds(new Set()); // selection is per loaded page
       setHasMore(data.has_more ?? false);
       setCurrentPage(page);
