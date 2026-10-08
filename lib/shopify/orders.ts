@@ -19,7 +19,8 @@ interface ShopifyLineItem {
   title: string;
   variant_title: string | null;
   sku: string;
-  quantity: number;
+  quantity: number;          // as originally ordered
+  current_quantity?: number; // after order edits / removals
   price: string;
 }
 
@@ -39,7 +40,8 @@ export interface ShopifyOrderRaw {
   phone: string | null;
   financial_status: string;
   fulfillment_status: string | null;
-  total_price: string;
+  total_price: string;          // as originally ordered
+  current_total_price?: string; // after order edits / refunds
   subtotal_price: string;
   total_tax: string;
   note: string | null;
@@ -114,6 +116,14 @@ const GOV_AR: Record<string, string> = {
   "Qalyubia":      "القليوبية",
 };
 
+// Live values after order edits (removed items have current_quantity 0)
+export function currentQty(li: { quantity: number; current_quantity?: number | null }): number {
+  return li.current_quantity ?? li.quantity;
+}
+export function orderTotal(o: { total_price?: string | null; current_total_price?: string | null }): number {
+  return parseFloat(o.current_total_price ?? o.total_price ?? "0");
+}
+
 function mapStatus(o: ShopifyOrderRaw): XenoOrder["status"] {
   if (o.cancelled_at) return "cancelled";
   if (o.fulfillment_status === "fulfilled") return "delivered";
@@ -151,13 +161,13 @@ export function normalizeOrder(o: ShopifyOrderRaw): XenoOrder {
     governorate: GOV_AR[addr?.province ?? ""] ?? addr?.province ?? "",
     status:      mapStatus(o),
     paymentStatus: mapPayment(o.financial_status),
-    total:       parseFloat(o.total_price),
-    items:       o.line_items.map((li) => ({
+    total:       orderTotal(o),
+    items:       o.line_items.filter((li) => currentQty(li) > 0).map((li) => ({
       id:          String(li.id),
       productName: li.title,
       variant:     li.variant_title ?? "",
       sku:         li.sku,
-      quantity:    li.quantity,
+      quantity:    currentQty(li),
       price:       parseFloat(li.price),
     })),
     trackingNumber:   fulfillment?.tracking_number ?? undefined,

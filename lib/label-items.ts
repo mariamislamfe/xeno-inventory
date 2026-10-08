@@ -2,13 +2,14 @@
 import { supabaseAdmin } from "@/lib/supabase/client";
 import { resolveJTAddress } from "@/lib/jt/address";
 import { toLocal } from "@/lib/phone";
+import { currentQty } from "@/lib/shopify/orders";
 
 export interface LabelItem { qty: number; name: string; color: string; size: string; sku: string }
 // Receiver as J&T has it: the street plus the area/city/province from J&T's table
 export interface LabelReceiver { name: string; phone: string; street: string; place: string }
 
 interface ShopifyLabelOrder {
-  line_items?: { title: string; quantity: number; sku?: string | null; variant_title?: string | null }[];
+  line_items?: { title: string; quantity: number; current_quantity?: number; sku?: string | null; variant_title?: string | null }[];
   shipping_address?: { first_name?: string; last_name?: string; phone?: string; address1?: string; city?: string; province?: string } | null;
 }
 
@@ -50,8 +51,8 @@ export async function getLabelData(shopifyOrderId: number): Promise<{ items: Lab
   const override = op.data?.items_override as { name: string; qty: number; sku?: string; variant?: string }[] | null;
   const items: LabelItem[] = override?.length
     ? override.map((i) => ({ qty: i.qty, name: i.name, sku: i.sku ?? "", ...splitVariant(i.variant ?? "") }))
-    : (order?.line_items ?? []).map((li) => ({
-        qty:  li.quantity,
+    : (order?.line_items ?? []).filter((li) => currentQty(li) > 0).map((li) => ({
+        qty:  currentQty(li),
         name: li.title,
         sku:  li.sku ?? "",
         ...splitVariant(li.variant_title ?? ""),

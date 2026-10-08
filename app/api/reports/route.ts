@@ -7,6 +7,7 @@ interface ShopifyOrderLite {
   id: number;
   order_number: number;
   total_price: string;
+  current_total_price?: string;
   financial_status: string;
   fulfillment_status: string | null;
   tags: string;
@@ -14,7 +15,7 @@ interface ShopifyOrderLite {
   customer?: { id: number };
 }
 
-const FIELDS = "id,order_number,total_price,financial_status,fulfillment_status,tags,created_at,customer";
+const FIELDS = "id,order_number,total_price,current_total_price,financial_status,fulfillment_status,tags,created_at,customer";
 
 async function fetchAllOrders(startDate: Date): Promise<ShopifyOrderLite[]> {
   const all: ShopifyOrderLite[] = [];
@@ -58,7 +59,7 @@ export async function GET(req: NextRequest) {
     let totalSales = 0;
 
     for (const o of orders) {
-      const amt = parseFloat(o.total_price ?? "0");
+      const amt = parseFloat(o.current_total_price ?? o.total_price ?? "0");   // after order edits
       totalSales += amt;
       const d = new Date(o.created_at);
       const key = formatBucketKey(d, period);
