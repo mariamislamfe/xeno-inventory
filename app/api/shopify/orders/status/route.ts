@@ -80,7 +80,7 @@ async function setReviewStatus(shopifyId: number, status: ReviewStatus): Promise
   const getResp = await sfetch(orderUrl, { headers: h(), cache: "no-store" });
   if (!getResp.ok) return { ok: false, error: `order fetch failed: ${getResp.status}` };
   const { order } = await getResp.json() as {
-    order: { name: string; tags: string; total_price: string; phone?: string | null; customer?: { first_name?: string; last_name?: string; phone?: string | null } | null };
+    order: { name: string; tags: string; total_price: string; current_total_price?: string; phone?: string | null; customer?: { first_name?: string; last_name?: string; phone?: string | null } | null };
   };
   const tags = withStatus(order.tags.split(","), status);
 
@@ -96,7 +96,7 @@ async function setReviewStatus(shopifyId: number, status: ReviewStatus): Promise
     order_number:     order.name,
     customer_name:    [order.customer?.first_name, order.customer?.last_name].filter(Boolean).join(" ") || null,
     phone:            order.phone ?? order.customer?.phone ?? null,
-    total:            Number(order.total_price),
+    total:            Number(order.current_total_price ?? order.total_price),
     op_status:        status === "new" ? "pending" : status,
     updated_at:       new Date().toISOString(),
   }, { onConflict: "shopify_order_id" });

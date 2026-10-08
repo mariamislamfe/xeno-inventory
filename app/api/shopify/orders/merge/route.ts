@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { normalizeOrder } from "@/lib/shopify/orders";
+import { normalizeOrder, currentQty } from "@/lib/shopify/orders";
 import type { ShopifyOrderRaw } from "@/lib/shopify/orders";
 import { toE164 } from "@/lib/phone";
 import { supabaseAdmin } from "@/lib/supabase/client";
@@ -123,14 +123,16 @@ async function mergeOrders(shopifyIds: number[]) {
     const mergedItems = new Map<string, { variantId?: number; title: string; quantity: number; price: string }>();
     for (const order of orders) {
       for (const li of order.line_items) {
+        const qty = currentQty(li);   // items removed by an order edit don't come along
+        if (qty <= 0) continue;
         const key = li.variant_id ? String(li.variant_id) : `custom_${li.title}`;
         if (mergedItems.has(key)) {
-          mergedItems.get(key)!.quantity += li.quantity;
+          mergedItems.get(key)!.quantity += qty;
         } else {
           mergedItems.set(key, {
             variantId: li.variant_id || undefined,
             title:     li.title,
-            quantity:  li.quantity,
+            quantity:  qty,
             price:     li.price,
           });
         }

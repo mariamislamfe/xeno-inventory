@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/client";
 import { createJTOrder } from "@/lib/jt/client";
 import { saveShipment } from "@/lib/shipments";
+import { currentQty, orderTotal } from "@/lib/shopify/orders";
 
 export async function POST(req: NextRequest) {
   const { orders } = await req.json();
@@ -150,7 +151,7 @@ async function fetchShopifyOrder(shopifyOrderId: number) {
 
   try {
     const res  = await fetch(
-      `https://${shop}/admin/api/${version}/orders/${shopifyOrderId}.json?fields=id,order_number,total_price,note,shipping_address,line_items`,
+      `https://${shop}/admin/api/${version}/orders/${shopifyOrderId}.json?fields=id,order_number,total_price,current_total_price,note,shipping_address,line_items`,
       { headers: { "X-Shopify-Access-Token": token }, cache: "no-store", signal: controller.signal }
     );
     clearTimeout(timer);
@@ -169,11 +170,13 @@ async function fetchShopifyOrder(shopifyOrderId: number) {
       province:     addr?.province ?? addr?.city ?? "",
       phone:        addr?.phone    ?? "",
       customerName: `${firstName} ${lastName}`.trim() || "",
-      total:        parseFloat(ord.total_price ?? "0"),
+      total:        orderTotal(ord),   // after edits, not the original total
       note:         (ord.note as string | null) ?? "",
-      items:        (ord.line_items ?? []).map((li: { title: string; quantity: number; sku?: string | null; variant_title?: string | null }) => ({
+      items:        (ord.line_items ?? [])
+        .filter((li: { quantity: number; current_quantity?: number }) => currentQty(li) > 0)
+        .map((li: { title: string; quantity: number; current_quantity?: number; sku?: string | null; variant_title?: string | null }) => ({
         name:    li.title,
-        qty:     li.quantity,
+        qty:     currentQty(li),
         sku:     li.sku ?? "",
         variant: li.variant_title ?? "",
       })),

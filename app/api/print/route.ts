@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/client";
+import { currentQty } from "@/lib/shopify/orders";
 
 export const revalidate = 0;
 
@@ -23,9 +24,10 @@ async function itemsByOrder(ids: number[]): Promise<Map<number, RowItem[]>> {
           { headers: { "X-Shopify-Access-Token": token }, cache: "no-store" },
         );
         if (!res.ok) continue;
-        const data = await res.json() as { orders: { id: number; line_items: { sku: string | null; title: string; variant_title: string | null; quantity: number }[] }[] };
+        const data = await res.json() as { orders: { id: number; line_items: { sku: string | null; title: string; variant_title: string | null; quantity: number; current_quantity?: number }[] }[] };
         for (const o of data.orders) {
-          out.set(o.id, o.line_items.map((li) => ({ sku: li.sku ?? "", name: li.title, variant: li.variant_title ?? "", qty: li.quantity })));
+          out.set(o.id, o.line_items.filter((li) => currentQty(li) > 0)
+            .map((li) => ({ sku: li.sku ?? "", name: li.title, variant: li.variant_title ?? "", qty: currentQty(li) })));
         }
       } catch { /* leave those rows without items */ }
     }

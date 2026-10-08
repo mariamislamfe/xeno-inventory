@@ -219,6 +219,16 @@ function EditItemsModal({ open, order, onClose, onSaved }: EditItemsModalProps) 
       }
     >
       <div className="space-y-4">
+        {order.trackingNumber && (
+          <div className="flex items-start gap-2 text-xs bg-[var(--warning-light)] border border-[var(--warning-border)] text-[var(--warning-text)] rounded-[var(--radius-md)] p-3">
+            <AlertCircle size={14} className="flex-shrink-0 mt-0.5" />
+            <span>
+              الطلب ده اتشحن بالفعل على J&T ({order.trackingNumber}). التعديل هيتحفظ في Shopify بس،
+              لكن مبلغ التحصيل والمنتجات عند J&T وعلى البوليصة هيفضلوا القديمين — لازم تلغي الشحنة
+              وتعيد شحنها عشان المبلغ الجديد يتسجل.
+            </span>
+          </div>
+        )}
         {/* Current items */}
         <div>
           <label className="block text-xs font-semibold text-[var(--text-secondary)] mb-2">المنتجات الحالية</label>
