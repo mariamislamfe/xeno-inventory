@@ -10,6 +10,7 @@ import { reviewStatus, withStatus, type ReviewStatus } from "@/lib/order-status"
 import { GOV_EN } from "@/lib/shopify/provinces";
 import { ShipModal } from "@/components/orders/ShipModal";
 import { printOrderLabel } from "@/lib/print-label";
+import { useConfirm } from "@/components/ui/ConfirmDialog";
 import { saveOrderNav } from "@/lib/order-nav";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
@@ -516,6 +517,7 @@ export default function OrdersPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [updatingId,  setUpdatingId]  = useState<string | null>(null);
   const [statusMenuId,setStatusMenuId]= useState<string | null>(null);
+  const [confirm, confirmDialog] = useConfirm();
   // Pagination
   const [pageSize,    setPageSize]    = useState(50);
   const [currentPage, setCurrentPage] = useState(1);
@@ -789,6 +791,7 @@ export default function OrdersPage() {
 
   return (
     <div className="space-y-4">
+      {confirmDialog}
       {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <div>
@@ -912,7 +915,9 @@ export default function OrdersPage() {
                 <Button variant="secondary" size="sm" icon={<CheckCircle2 size={13} />} onClick={() => runBulk("confirm")}>
                   {ACTION_LABELS.confirm.button}
                 </Button>
-                <Button variant="secondary" size="sm" icon={<XCircle size={13} />} onClick={() => runBulk("cancel")}>
+                <Button variant="secondary" size="sm" icon={<XCircle size={13} />} onClick={async () => {
+                  if (await confirm({ title: `تحويل ${selectedCount} طلب لـ ملغي؟`, message: "تقدري ترجّعيهم لأي حالة تانية بعدين.", confirmLabel: "ملغي", danger: true })) runBulk("cancel");
+                }}>
                   {ACTION_LABELS.cancel.button}
                 </Button>
                 <Button variant="primary" size="sm" icon={<Truck size={13} />} onClick={() => setBulkConfirm("ship")}>
@@ -1093,7 +1098,10 @@ export default function OrdersPage() {
                                       <CheckCircle2 size={13} /> مكتمل
                                     </button>
                                     <button
-                                      onClick={() => { setStatusMenuId(null); updateOrderStatus(order, "cancel"); }}
+                                      onClick={async () => {
+                                        setStatusMenuId(null);
+                                        if (await confirm({ title: `تحويل ${order.orderNumber} لـ ملغي؟`, message: "تقدري ترجّعيه لأي حالة تانية بعدين.", confirmLabel: "ملغي", danger: true })) updateOrderStatus(order, "cancel");
+                                      }}
                                       className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--danger)] hover:bg-[var(--bg-base)] transition-colors whitespace-nowrap"
                                     >
                                       <XCircle size={13} /> ملغي
@@ -1151,7 +1159,10 @@ export default function OrdersPage() {
                             {order.trackingNumber ? (
                               <button className="p-1.5 rounded-[var(--radius-sm)] text-[var(--success)] hover:bg-[var(--success-light)] transition-colors"
                                 title="طباعة البوليصة"
-                                onClick={() => printOrderLabel(order.shopifyId).catch((err) => error("فشل الطباعة", err instanceof Error ? err.message : String(err)))}>
+                                onClick={async () => {
+                                  if (!(await confirm({ title: `طباعة بوليصة ${order.orderNumber}؟`, message: "البوليصة هتتطبع وهتتعلّم Printed على J&T.", confirmLabel: "طباعة" }))) return;
+                                  printOrderLabel(order.shopifyId).catch((err) => error("فشل الطباعة", err instanceof Error ? err.message : String(err)));
+                                }}>
                                 <Printer size={14} />
                               </button>
                             ) : (
