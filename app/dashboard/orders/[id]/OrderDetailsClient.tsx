@@ -18,6 +18,7 @@ import { ShipModal } from "@/components/orders/ShipModal";
 import { neighboursFromList } from "@/lib/order-nav";
 import { reviewStatus, withStatus, type ReviewStatus } from "@/lib/order-status";
 import { printOrderLabel } from "@/lib/print-label";
+import { useConfirm } from "@/components/ui/ConfirmDialog";
 import type { AddressValue } from "@/components/orders/AddressPicker";
 
 // Same J&T address picker as the new-order form (lazy: carries the full address list)
@@ -509,6 +510,7 @@ function StatusMenu({ order, label, variant, onChange }: {
   const [menu, setMenu] = useState(false);
   const [busy, setBusy] = useState(false);
   const { success, error } = useToast();
+  const [confirm, confirmDialog] = useConfirm();
 
   async function apply(action: StatusAction) {
     setMenu(false);
@@ -538,6 +540,7 @@ function StatusMenu({ order, label, variant, onChange }: {
   ];
   return (
     <div className="relative inline-block">
+      {confirmDialog}
       <button onClick={() => setMenu(!menu)} disabled={busy} className="flex items-center gap-1" title="تغيير الحالة">
         <Badge variant={variant}>
           {busy && <Loader2 size={11} className="inline animate-spin ml-1" />}
@@ -550,7 +553,13 @@ function StatusMenu({ order, label, variant, onChange }: {
           <div className="fixed inset-0 z-10" onClick={() => setMenu(false)} />
           <div className="absolute z-20 top-full mt-1 right-0 flex flex-col bg-[var(--bg-card)] border border-[var(--border-color)] rounded-md shadow-lg overflow-hidden min-w-[120px]">
             {items.map((it) => (
-              <button key={it.action} onClick={() => apply(it.action)}
+              <button key={it.action} onClick={async () => {
+                if (it.action === "cancel") {
+                  setMenu(false);
+                  if (!(await confirm({ title: `تحويل ${order.orderNumber} لـ ملغي؟`, message: "تقدري ترجّعيه لأي حالة تانية بعدين.", confirmLabel: "ملغي", danger: true }))) return;
+                }
+                apply(it.action);
+              }}
                 className={`flex items-center gap-2 px-3 py-2 text-xs hover:bg-[var(--bg-base)] transition-colors whitespace-nowrap ${it.cls}`}>
                 {it.icon} {it.text}
               </button>
@@ -568,6 +577,7 @@ export function OrderDetailsClient({ order: initialOrder }: OrderDetailsClientPr
   const [editItemsOpen,  setEditItemsOpen]  = useState(false);
   const [shipOpen,       setShipOpen]       = useState(false);
   const { error: toastError } = useToast();
+  const [confirm, confirmDialog] = useConfirm();
 
   // "مكتمل" = confirmed (tag), still waiting to be shipped
   const open      = order.status !== "cancelled";   // editable unless cancelled in Shopify itself
@@ -583,6 +593,7 @@ export function OrderDetailsClient({ order: initialOrder }: OrderDetailsClientPr
 
   return (
     <div className="space-y-5">
+      {confirmDialog}
 
       {/* ── Breadcrumb + previous / next order ────────────────────── */}
       <div className="flex items-center gap-2 text-sm text-[var(--text-muted)]">
@@ -627,7 +638,10 @@ export function OrderDetailsClient({ order: initialOrder }: OrderDetailsClientPr
               تعديل المنتجات
             </Button>
             <Button variant="secondary" size="sm" icon={<Printer size={14} />}
-              onClick={() => printOrderLabel(order.shopifyId).catch((err) => toastError("فشل الطباعة", err instanceof Error ? err.message : String(err)))}>
+              onClick={async () => {
+                if (!(await confirm({ title: `طباعة بوليصة ${order.orderNumber}؟`, message: order.trackingNumber ? "البوليصة هتتطبع وهتتعلّم Printed على J&T." : "هتتطبع بوليصة السيستم (الطلب لسه ماتشحنش على J&T).", confirmLabel: "طباعة" }))) return;
+                printOrderLabel(order.shopifyId).catch((err) => toastError("فشل الطباعة", err instanceof Error ? err.message : String(err)));
+              }}>
               طباعة
             </Button>
             <a

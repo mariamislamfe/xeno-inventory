@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useToast } from "@/components/ui/Toast";
 import { printOrderLabel, printOrderLabels } from "@/lib/print-label";
+import { useConfirm } from "@/components/ui/ConfirmDialog";
 
 // Shipped orders waiting for their J&T waybill to be printed. Printing goes through
 // J&T's print API, which is what moves the order to "Printed" on the J&T side.
@@ -52,6 +53,7 @@ export default function PrintPage() {
   const [bulk,       setBulk]       = useState<{ done: number; total: number } | null>(null);
   const [day,        setDay]        = useState("");   // "" = all days
   const [sku,        setSku]        = useState("");   // "" = all products
+  const [confirm, confirmDialog] = useConfirm();
   const { success, error } = useToast();
 
   async function fetchRows(t: Tab): Promise<PrintRow[]> {
@@ -137,6 +139,11 @@ export default function PrintPage() {
   }
   async function printMany(list: PrintRow[]) {
     if (!list.length) return;
+    if (!(await confirm({
+      title:        `طباعة ${list.length} بوليصة؟`,
+      message:      `${list.length === 1 ? "البوليصة" : `الـ ${list.length} بوليصة`} هتتطبع وهتتعلّم Printed على J&T.`,
+      confirmLabel: "طباعة",
+    }))) return;
     setBulk({ done: 0, total: list.length });
     try {
       const { printed, failed } = await printOrderLabels(
@@ -157,6 +164,11 @@ export default function PrintPage() {
   }
 
   async function printLabel(row: PrintRow) {
+    if (!(await confirm({
+      title:        `${tab === "pending" ? "طباعة" : "إعادة طباعة"} بوليصة ${row.order_number}؟`,
+      message:      "البوليصة هتتطبع وهتتعلّم Printed على J&T.",
+      confirmLabel: "طباعة",
+    }))) return;
     setPrintingId(row.shopify_order_id);
     try {
       await printOrderLabel(row.shopify_order_id);
@@ -171,6 +183,7 @@ export default function PrintPage() {
 
   return (
     <div className="space-y-4">
+      {confirmDialog}
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-page-title">الطباعة</h1>
