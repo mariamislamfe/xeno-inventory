@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/client";
 import { cancelJTOrder, getJTOrderIdByWaybill } from "@/lib/jt/client";
+import { setReviewStatus } from "@/lib/order-status-server";
 
 // POST /api/shipments/cancel  { shopify_order_id, reason? }
-// Cancels the J&T shipment and removes it here, so the order can be shipped again.
+// Cancels the J&T shipment (printed or not), removes it here and sets the order to
+// ملغي, so J&T and the dashboard agree. (ملغي can still be changed back later and
+// the order shipped again under a new J&T id.)
 export async function POST(req: NextRequest) {
   const { shopify_order_id, reason } = await req.json().catch(() => ({}));
   if (!shopify_order_id) return NextResponse.json({ error: "shopify_order_id required" }, { status: 400 });
@@ -34,6 +37,7 @@ export async function POST(req: NextRequest) {
   }
 
   await supabaseAdmin.from("shipments").delete().eq("id", ship.id);
+  const statusRes = await setReviewStatus(Number(shopify_order_id), "cancelled");
   await supabaseAdmin.from("activity_log").insert({
     type:      "shipment",
     action:    "cancelled",
@@ -42,5 +46,8 @@ export async function POST(req: NextRequest) {
     user_name: "النظام",
     metadata:  { order_number: ship.order_number, tracking_number: ship.tracking_number, txlogisticId },
   });
+  if (!statusRes.ok) {
+    return NextResponse.json({ ok: true, warning: `اتلغت على J&T، بس حالة الطلب ماتغيرتش: ${statusRes.error}` });
+  }
   return NextResponse.json({ ok: true });
 }

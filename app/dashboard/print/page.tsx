@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Printer, Loader2, RefreshCw, Search, CheckCircle2, Eye, CalendarDays, Package, X } from "lucide-react";
+import { Printer, Loader2, RefreshCw, Search, CheckCircle2, Eye, CalendarDays, Package, X, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useToast } from "@/components/ui/Toast";
@@ -160,6 +160,34 @@ export default function PrintPage() {
       }
     } finally {
       setBulk(null);
+    }
+  }
+
+  // Cancel the shipment on J&T (even if the label was printed) and set the order to ملغي
+  async function cancelShipment(row: PrintRow) {
+    if (!(await confirm({
+      title:        `إلغاء شحنة ${row.order_number}؟`,
+      message:      `الشحنة ${row.tracking_number} هتتلغي على J&T${tab === "printed" ? " (حتى لو البوليصة اتطبعت)" : ""} والطلب هيتحول لـ "ملغي" عندنا. لو المندوب استلمها خلاص، J&T ممكن ترفض.`,
+      confirmLabel: "إلغاء الشحنة",
+      danger:       true,
+    }))) return;
+    setPrintingId(row.shopify_order_id);
+    try {
+      const res  = await fetch("/api/shipments/cancel", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ shopify_order_id: row.shopify_order_id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "فشل الإلغاء");
+      setRows((prev) => prev.filter((r) => r.id !== row.id));
+      setSelected((prev) => { const n = new Set(prev); n.delete(row.id); return n; });
+      if (data.warning) error("اتلغت على J&T", data.warning);
+      else success("اتلغت الشحنة", `${row.order_number} — اتلغت على J&T والطلب بقى ملغي`);
+    } catch (err) {
+      error("فشل إلغاء الشحنة", err instanceof Error ? err.message : String(err));
+    } finally {
+      setPrintingId(null);
     }
   }
 
@@ -334,6 +362,11 @@ export default function PrintPage() {
                         onClick={() => printLabel(r)}>
                         {tab === "pending" ? "طباعة البوليصة" : "إعادة طباعة"}
                       </Button>
+                      <button title="إلغاء الشحنة على J&T" disabled={printingId !== null || bulk !== null}
+                        onClick={() => cancelShipment(r)}
+                        className="p-1.5 rounded-[var(--radius-sm)] text-[var(--text-muted)] hover:bg-[var(--danger-light)] hover:text-[var(--danger)] transition-colors disabled:opacity-40">
+                        <XCircle size={16} />
+                      </button>
                       </div>
                     </td>
                   </tr>
