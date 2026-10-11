@@ -340,10 +340,18 @@ export default function PrintPage() {
                     </td>
                     <td className="text-xs">{r.customer_name ?? "—"}</td>
                     <td className="text-xs" dir="ltr">{r.phone ?? "—"}</td>
-                    <td className="text-[11px] whitespace-nowrap" dir="ltr">
-                      {r.items.length
-                        ? r.items.map((i) => `${i.sku || i.name} ×${i.qty}`).join("، ")
-                        : <span className="text-[var(--text-muted)]">—</span>}
+                    {/* One chip per item; chips wrap onto new lines, so a big order grows down, not sideways */}
+                    <td className="min-w-[120px] max-w-[220px]">
+                      {r.items.length ? (
+                        <div className="flex flex-wrap gap-1" dir="ltr">
+                          {r.items.map((i, k) => (
+                            <span key={k} title={`${i.name}${i.variant ? ` (${i.variant})` : ""}`}
+                              className="inline-block max-w-full truncate rounded bg-[var(--bg-base)] border border-[var(--border-subtle)] px-1.5 py-0.5 text-[10.5px] font-semibold leading-tight">
+                              {i.sku || i.name} ×{i.qty}
+                            </span>
+                          ))}
+                        </div>
+                      ) : <span className="text-[11px] text-[var(--text-muted)]">—</span>}
                     </td>
                     <td><span className="font-mono text-xs font-semibold">{r.tracking_number}</span></td>
                     <td><span className="text-[11px] text-[var(--text-muted)] whitespace-nowrap">{formatDate(r.created_at)}</span></td>
