@@ -127,7 +127,8 @@ export default function ShipmentsPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) throw new Error(data.error ?? "فشل الإلغاء");
       setShipments((prev) => prev.filter((x) => x.id !== cancelRow.id));
-      success("اتلغت الشحنة على J&T", `${cancelRow.order_number} — الطلب ممكن يتشحن تاني`);
+      if (data.warning) toastError("اتلغت على J&T", data.warning);
+      else success("اتلغت الشحنة", `${cancelRow.order_number} — اتلغت على J&T والطلب بقى ملغي`);
       setCancelRow(null);
     } catch (err) {
       toastError("فشل إلغاء الشحنة", err instanceof Error ? err.message : String(err));
@@ -185,8 +186,8 @@ export default function ShipmentsPage() {
           </>
         )}>
         <p className="text-sm text-[var(--text-secondary)] leading-relaxed">
-          هيتم إلغاء الشحنة {cancelRow?.tracking_number} على J&T، والطلب هيرجع من غير رقم تتبع
-          فتقدر تشحنه تاني بعدين. لو المندوب استلم الشحنة خلاص، J&T ممكن ترفض الإلغاء.
+          هيتم إلغاء الشحنة {cancelRow?.tracking_number} على J&T والطلب هيتحول لـ «ملغي» عندنا.
+          لو المندوب استلم الشحنة خلاص، J&T ممكن ترفض الإلغاء.
         </p>
       </Modal>
 

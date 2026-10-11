@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase/client";
 import { requireAdmin } from "@/lib/auth/requireAdmin";
-import { withStatus, type ReviewStatus } from "@/lib/order-status";
+import { setReviewStatus } from "@/lib/order-status-server";
 
 const SHOP    = process.env.SHOPIFY_SHOP!;
 const TOKEN   = process.env.SHOPIFY_ACCESS_TOKEN!;
@@ -69,37 +68,6 @@ async function cancelOrder(shopifyId: number): Promise<{ ok: boolean; error?: st
     const txt = await resp.text();
     return { ok: false, error: txt };
   }
-  return { ok: true };
-}
-
-// Set the dashboard status (جديد / انتظار / مكتمل / ملغي) — our own tags only, so
-// Shopify's own tags are left alone — and record it in xeno_ops.
-// (Shopify's own cancel can't be undone, so it's only used right before deleting.)
-async function setReviewStatus(shopifyId: number, status: ReviewStatus): Promise<{ ok: boolean; error?: string }> {
-  const orderUrl = `https://${SHOP}/admin/api/${VERSION}/orders/${shopifyId}.json`;
-  const getResp = await sfetch(orderUrl, { headers: h(), cache: "no-store" });
-  if (!getResp.ok) return { ok: false, error: `order fetch failed: ${getResp.status}` };
-  const { order } = await getResp.json() as {
-    order: { name: string; tags: string; total_price: string; current_total_price?: string; phone?: string | null; customer?: { first_name?: string; last_name?: string; phone?: string | null } | null };
-  };
-  const tags = withStatus(order.tags.split(","), status);
-
-  const putResp = await sfetch(orderUrl, {
-    method:  "PUT",
-    headers: h(),
-    body:    JSON.stringify({ order: { id: shopifyId, tags: tags.join(",") } }),
-  });
-  if (!putResp.ok) return { ok: false, error: await putResp.text() };
-
-  await supabaseAdmin.from("xeno_ops").upsert({
-    shopify_order_id: shopifyId,
-    order_number:     order.name,
-    customer_name:    [order.customer?.first_name, order.customer?.last_name].filter(Boolean).join(" ") || null,
-    phone:            order.phone ?? order.customer?.phone ?? null,
-    total:            Number(order.current_total_price ?? order.total_price),
-    op_status:        status === "new" ? "pending" : status,
-    updated_at:       new Date().toISOString(),
-  }, { onConflict: "shopify_order_id" });
   return { ok: true };
 }
 
