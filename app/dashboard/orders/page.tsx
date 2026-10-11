@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { RefreshCw, Eye, Printer, Truck, Loader2, Search, ChevronDown, Tag, X, Plus, Save, CheckCircle2, XCircle, Trash2, RotateCcw, Clock } from "lucide-react";
+import { RefreshCw, Eye, Printer, Truck, Loader2, Search, ChevronDown, Tag, X, Plus, Save, CheckCircle2, XCircle, Trash2, RotateCcw, Clock, CalendarClock } from "lucide-react";
 import type { AddressValue } from "@/components/orders/AddressPicker";
 import { phoneKey } from "@/lib/phone";
 import { reviewStatus, withStatus, type ReviewStatus } from "@/lib/order-status";
@@ -352,6 +352,7 @@ const STATUS_DISPLAY: Record<string, { label: string; variant: "success" | "warn
 const REVIEW_DISPLAY: Record<ReviewStatus, { label: string; variant: "success" | "warning" | "danger" | "info" | "neutral" }> = {
   new:       { label: "جديد",   variant: "warning" },
   waiting:   { label: "انتظار", variant: "info"    },
+  postponed: { label: "مؤجل",   variant: "neutral" },
   confirmed: { label: "مكتمل",  variant: "success" },
   cancelled: { label: "ملغي",   variant: "danger"  },
 };
@@ -366,12 +367,13 @@ function isCancelTagged(o: XenoOrder) {
 }
 
 // ── Order actions (same action for one order or a whole selection) ─────
-type OrderAction = "confirm" | "unconfirm" | "wait" | "cancel" | "delete" | "ship";
+type OrderAction = "confirm" | "unconfirm" | "wait" | "postpone" | "cancel" | "delete" | "ship";
 
 const ACTION_LABELS: Record<OrderAction, { button: string; done: (n: number) => string; ask?: (n: number) => string }> = {
   confirm:   { button: "مكتمل", done: (n) => n === 1 ? "الطلب بقى مكتمل ✓" : `${n} طلب بقوا مكتملين ✓` },
   unconfirm: { button: "جديد",  done: (n) => n === 1 ? "الطلب رجع جديد"     : `${n} طلب رجعوا جديد` },
   wait:      { button: "انتظار", done: (n) => n === 1 ? "الطلب في الانتظار"  : `${n} طلب في الانتظار` },
+  postpone:  { button: "مؤجل",   done: (n) => n === 1 ? "الطلب اتأجل"        : `${n} طلب اتأجلوا` },
   cancel:  { button: "ملغي",        done: (n) => n === 1 ? "الطلب بقى ملغي"      : `${n} طلب بقوا ملغيين` },
   delete:  { button: "حذف",         done: (n) => n === 1 ? "تم حذف الطلب"        : `تم حذف ${n} طلب`,
              ask:  (n) => `سيتم إلغاء وحذف ${n} طلب نهائياً من Shopify، ولا يمكن التراجع عن الحذف. متأكد؟` },
@@ -492,7 +494,7 @@ const TABS: { key: TabKey; label: string; shopifyParam: Record<string, string> }
   { key: "waiting",     label: "⏳ انتظار",   shopifyParam: { status: "any",    tag: "xeno-waiting" } },
   { key: "confirmed",   label: "✅ مكتملة",   shopifyParam: { status: "any",    tag: "xeno-confirmed" } },
   { key: "cancelled",   label: "ملغية",       shopifyParam: { status: "any",    tag: "xeno-cancelled" } },
-  { key: "postponed",   label: "⏰ مؤجلة",    shopifyParam: { status: "any",    tag: "postponed" } },
+  { key: "postponed",   label: "⏰ مؤجلة",    shopifyParam: { status: "any",    tag: "xeno-postponed" } },
 ];
 
 function formatDate(iso: string): string {
@@ -585,7 +587,9 @@ export default function OrdersPage() {
     }
     setOrders((prev) => prev.map((o) => {
       if (!ids.has(o.id)) return o;
-      const next: ReviewStatus = action === "wait" ? "waiting" : action === "cancel" ? "cancelled" : action === "confirm" ? "confirmed" : "new";
+      const next: ReviewStatus =
+        action === "wait" ? "waiting" : action === "postpone" ? "postponed"
+        : action === "cancel" ? "cancelled" : action === "confirm" ? "confirmed" : "new";
       return { ...o, tags: withStatus(o.tags, next) };
     }));
   }
@@ -912,6 +916,9 @@ export default function OrdersPage() {
                 <Button variant="secondary" size="sm" icon={<Clock size={13} />} onClick={() => runBulk("wait")}>
                   {ACTION_LABELS.wait.button}
                 </Button>
+                <Button variant="secondary" size="sm" icon={<CalendarClock size={13} />} onClick={() => runBulk("postpone")}>
+                  {ACTION_LABELS.postpone.button}
+                </Button>
                 <Button variant="secondary" size="sm" icon={<CheckCircle2 size={13} />} onClick={() => runBulk("confirm")}>
                   {ACTION_LABELS.confirm.button}
                 </Button>
@@ -1090,6 +1097,12 @@ export default function OrdersPage() {
                                       className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--info)] hover:bg-[var(--bg-base)] transition-colors whitespace-nowrap"
                                     >
                                       <Clock size={13} /> انتظار
+                                    </button>
+                                    <button
+                                      onClick={() => { setStatusMenuId(null); updateOrderStatus(order, "postpone"); }}
+                                      className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-base)] transition-colors whitespace-nowrap"
+                                    >
+                                      <CalendarClock size={13} /> مؤجل
                                     </button>
                                     <button
                                       onClick={() => { setStatusMenuId(null); updateOrderStatus(order, "confirm"); }}

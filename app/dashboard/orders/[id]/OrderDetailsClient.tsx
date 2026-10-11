@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import {
-  ArrowRight, ChevronUp, ChevronDown, CheckCircle2, XCircle, Truck, Phone, Mail, MapPin, RotateCcw, Clock,
+  ArrowRight, ChevronUp, ChevronDown, CheckCircle2, XCircle, Truck, Phone, Mail, MapPin, RotateCcw, Clock, CalendarClock,
   Package, MessageSquare, Printer, Edit2, Tag, Plus, X,
   Loader2, ExternalLink, Save, ShoppingBag, AlertCircle,
 } from "lucide-react";
@@ -498,8 +498,8 @@ function OrderStepper({ order }: { order: XenoOrder }) {
 
 // Status menu (same four statuses as the orders list). All are tags, so any of
 // them can be changed again later.
-type StatusAction = "unconfirm" | "wait" | "confirm" | "cancel";
-const ACTION_STATUS: Record<StatusAction, ReviewStatus> = { unconfirm: "new", wait: "waiting", confirm: "confirmed", cancel: "cancelled" };
+type StatusAction = "unconfirm" | "wait" | "postpone" | "confirm" | "cancel";
+const ACTION_STATUS: Record<StatusAction, ReviewStatus> = { unconfirm: "new", wait: "waiting", postpone: "postponed", confirm: "confirmed", cancel: "cancelled" };
 
 function StatusMenu({ order, label, variant, onChange }: {
   order: XenoOrder;
@@ -535,6 +535,7 @@ function StatusMenu({ order, label, variant, onChange }: {
   const items: { action: StatusAction; text: string; icon: React.ReactNode; cls: string }[] = [
     { action: "unconfirm", text: "جديد",   icon: <RotateCcw size={13} />,    cls: "text-[var(--warning-text)]" },
     { action: "wait",      text: "انتظار", icon: <Clock size={13} />,        cls: "text-[var(--info)]" },
+    { action: "postpone",  text: "مؤجل",   icon: <CalendarClock size={13} />, cls: "text-[var(--text-secondary)]" },
     { action: "confirm",   text: "مكتمل",  icon: <CheckCircle2 size={13} />, cls: "text-[var(--success)]" },
     { action: "cancel",    text: "ملغي",   icon: <XCircle size={13} />,      cls: "text-[var(--danger)]" },
   ];
@@ -585,6 +586,7 @@ export function OrderDetailsClient({ order: initialOrder }: OrderDetailsClientPr
   const cancelTag = review === "cancelled";
   const st = open
     ? ({ new: { label: "جديد", variant: "warning" as const }, waiting: { label: "انتظار", variant: "info" as const },
+         postponed: { label: "مؤجل", variant: "neutral" as const },
          confirmed: { label: "مكتمل", variant: "success" as const }, cancelled: { label: "ملغي", variant: "danger" as const } })[review]
     : STATUS_DISPLAY.cancelled;
   const pm = PAYMENT_DISPLAY[order.paymentStatus] ?? { label: order.paymentStatus, variant: "neutral" as const };

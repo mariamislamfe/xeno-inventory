@@ -102,6 +102,8 @@ export async function POST(req: NextRequest) {
       result = await setReviewStatus(Number(shopifyId), "new");
     } else if (action === "wait") {
       result = await setReviewStatus(Number(shopifyId), "waiting");
+    } else if (action === "postpone") {
+      result = await setReviewStatus(Number(shopifyId), "postponed");
     } else if (action === "delete") {
       // Deleting orders is a manager-only action
       const auth = await requireAdmin();
