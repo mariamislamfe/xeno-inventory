@@ -5,6 +5,7 @@
 
 export const STATUS_TAG = {
   waiting:   "xeno-waiting",
+  postponed: "xeno-postponed",
   confirmed: "xeno-confirmed",
   cancelled: "xeno-cancelled",
 } as const;
@@ -21,6 +22,7 @@ export function reviewStatus(tags: string[]): ReviewStatus {
   const t = tags.map((x) => x.trim().toLowerCase());
   if (t.includes(STATUS_TAG.cancelled)) return "cancelled";
   if (t.includes(STATUS_TAG.confirmed)) return "confirmed";
+  if (t.includes(STATUS_TAG.postponed)) return "postponed";
   if (t.includes(STATUS_TAG.waiting))   return "waiting";
   return "new";
 }
