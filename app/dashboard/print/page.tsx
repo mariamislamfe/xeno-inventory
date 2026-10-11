@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Printer, Loader2, RefreshCw, Search, CheckCircle2, Eye, CalendarDays, Package, X, XCircle } from "lucide-react";
+import { Printer, Loader2, RefreshCw, Search, CheckCircle2, CalendarDays, Package, X, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useToast } from "@/components/ui/Toast";
@@ -119,15 +119,6 @@ export default function PrintPage() {
   const skuPieces = skuQuery
     ? filtered.reduce((n, r) => n + r.items.filter((i) => skuExact ? skuKey(i.sku) === skuQuery : skuKey(i.sku).includes(skuQuery)).reduce((a, i) => a + i.qty, 0), 0)
     : 0;
-
-  // Already-printed labels only: shows it on screen, nothing is printed or recorded
-  async function previewLabel(row: PrintRow) {
-    try {
-      await printOrderLabel(row.shopify_order_id, { preview: true });
-    } catch (err) {
-      error("فشل المعاينة", err instanceof Error ? err.message : String(err));
-    }
-  }
 
   // Selected rows (or all shown rows) in one print job
   const selectedRows = filtered.filter((r) => selected.has(r.id));
@@ -357,13 +348,6 @@ export default function PrintPage() {
                     <td><span className="text-[11px] text-[var(--text-muted)] whitespace-nowrap">{formatDate(r.created_at)}</span></td>
                     <td className="text-center">
                       <div className="flex items-center justify-center gap-1.5">
-                      {tab === "printed" && (
-                        <Button size="sm" variant="secondary" icon={<Eye size={13} />}
-                          disabled={printingId !== null}
-                          onClick={() => previewLabel(r)}>
-                          معاينة
-                        </Button>
-                      )}
                       <Button size="sm" variant={tab === "pending" ? "primary" : "secondary"}
                         icon={printingId === r.shopify_order_id ? <Loader2 size={13} className="animate-spin" /> : <Printer size={13} />}
                         disabled={printingId !== null}
