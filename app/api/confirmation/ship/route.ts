@@ -103,6 +103,7 @@ export async function POST(req: NextRequest) {
       governorate:  shopifyOrder?.province     ?? o.governorate ?? "",
       items:        itemsToShip,
       totalAmount:  shopifyOrder?.total        ?? o.total       ?? 0,
+      codAmount:    shopifyOrder?.toCollect,   // paid online → 0, J&T collects nothing
       note:         shopifyOrder?.note,
     });
 
@@ -115,7 +116,7 @@ export async function POST(req: NextRequest) {
       provider:         "J&T Express",
       status:           "pending",   // J&T hasn't picked it up yet — the status sync moves it on
       tracking_number:  jtResult.trackingNumber ?? null,
-      cod_amount:       shopifyOrder?.total ?? o.total ?? null,
+      cod_amount:       shopifyOrder?.toCollect ?? shopifyOrder?.total ?? o.total ?? null,
       address:          shopifyOrder?.address1 ?? o.address ?? null,
       city:             shopifyOrder?.city ?? o.city ?? null,
       governorate:      shopifyOrder?.province ?? o.governorate ?? null,
@@ -161,6 +162,17 @@ export async function POST(req: NextRequest) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// What the courier should collect: Shopify's outstanding balance (0 when the order
+// was paid online, the rest when partly paid), never more than the order total.
+function amountToCollect(ord: { total_outstanding?: string | null; financial_status?: string | null; total_price?: string | null; current_total_price?: string | null }): number {
+  const total = orderTotal(ord);
+  if (ord.total_outstanding != null && ord.total_outstanding !== "") {
+    const out = parseFloat(ord.total_outstanding);
+    if (Number.isFinite(out)) return Math.min(Math.max(0, out), total);
+  }
+  return ["paid", "refunded", "partially_refunded"].includes(String(ord.financial_status)) ? 0 : total;
+}
+
 async function fetchShopifyOrder(shopifyOrderId: number) {
   const shop    = process.env.SHOPIFY_SHOP;
   const token   = process.env.SHOPIFY_ACCESS_TOKEN;
@@ -172,7 +184,7 @@ async function fetchShopifyOrder(shopifyOrderId: number) {
 
   try {
     const res  = await fetch(
-      `https://${shop}/admin/api/${version}/orders/${shopifyOrderId}.json?fields=id,order_number,total_price,current_total_price,note,shipping_address,line_items`,
+      `https://${shop}/admin/api/${version}/orders/${shopifyOrderId}.json?fields=id,order_number,total_price,current_total_price,total_outstanding,financial_status,note,shipping_address,line_items`,
       { headers: { "X-Shopify-Access-Token": token }, cache: "no-store", signal: controller.signal }
     );
     clearTimeout(timer);
@@ -192,6 +204,7 @@ async function fetchShopifyOrder(shopifyOrderId: number) {
       phone:        addr?.phone    ?? "",
       customerName: `${firstName} ${lastName}`.trim() || "",
       total:        orderTotal(ord),   // after edits, not the original total
+      toCollect:    amountToCollect(ord),
       note:         (ord.note as string | null) ?? "",
       items:        (ord.line_items ?? [])
         .filter((li: { quantity: number; current_quantity?: number }) => currentQty(li) > 0)

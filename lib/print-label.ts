@@ -195,6 +195,13 @@ export function labelPageHtml(labels: LabelData[], fallbackUrl: string, autoPrin
         if (!cods && /^cods$/i.test(s)) cods = t; // not the big "COD" badge
         if (!fod && /^fod$/i.test(s)) fod = t;
       });
+      // The amount J&T collects (next to "Cods"); 0 = the customer already paid online
+      var codAmountItem = null;
+      if (cods) text.items.forEach(function (t) {
+        if (!codAmountItem && t !== cods && /^\\d+(\\.\\d+)?$/.test((t.str || "").trim()) &&
+            Math.abs(t.transform[5] - cods.transform[5]) < 3 && t.transform[4] > cods.transform[4]) codAmountItem = t;
+      });
+      var paidOrder = !!codAmountItem && parseFloat(codAmountItem.str) === 0;
 
       // Make room for the items table: drop the sideways barcode (the main barcode stays
       // on top), write XENO in its place, squeeze the empty gaps in the address section,
@@ -531,6 +538,14 @@ export function labelPageHtml(labels: LabelData[], fallbackUrl: string, autoPrin
               img2.data[k] = img2.data[k + 1] = img2.data[k + 2] = v;
             }
             c.putImageData(img2, gL, y0 + gT);
+            // Paid online → the badge says مدفوع instead of COD
+            if (paidOrder) {
+              c.fillStyle = "#000";
+              c.fillRect(gL - 1, y0 + gT - 3, bw + 2, bh + 4);   // also covers the anti-aliased edge
+              c.fillStyle = "#fff"; c.textAlign = "center"; c.textBaseline = "middle";
+              c.font = "900 " + (bh * 0.55) + "px Arial, sans-serif";
+              c.fillText("مدفوع", gL + bw / 2, y0 + gT + bh / 2);
+            }
           }
         }
 
@@ -601,11 +616,7 @@ export function labelPageHtml(labels: LabelData[], fallbackUrl: string, autoPrin
         sheet.appendChild(d);
       }
       if (cods) {
-        var amount = null;
-        text.items.forEach(function (t) {
-          if (!amount && t !== cods && /^\\d+(\\.\\d+)?$/.test((t.str || "").trim()) &&
-              Math.abs(t.transform[5] - cods.transform[5]) < 3 && t.transform[4] > cods.transform[4]) amount = t;
-        });
+        var amount = codAmountItem;
         coverItem(cods);   // no label — just the amount, centred in its cell
         if (amount) {
           coverItem(amount);
@@ -629,11 +640,11 @@ export function labelPageHtml(labels: LabelData[], fallbackUrl: string, autoPrin
           d2.style.whiteSpace = "nowrap";
           d2.style.fontWeight = "900";
           d2.style.color = "#000";
-          d2.textContent = (n % 1 ? n.toFixed(2) : String(n)) + " L.E";
+          d2.textContent = paidOrder ? "مدفوع ✓" : (n % 1 ? n.toFixed(2) : String(n)) + " L.E";
           sheet.appendChild(d2);
         }
       }
-      if (fod) { coverItem(fod); writeAt(fod, "COD", false); }
+      if (fod) { coverItem(fod); writeAt(fod, paidOrder ? "PAID" : "COD", false); }
 
       function buildTable(fontPt) {
         var table = document.createElement("table");
