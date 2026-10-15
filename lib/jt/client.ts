@@ -115,7 +115,8 @@ export interface JTOrderInput {
   city:         string;
   governorate:  string;
   items:        JTItem[];
-  totalAmount:  number;
+  totalAmount:  number;   // order value (declared value of the goods)
+  codAmount?:   number;   // what the courier collects; 0 = paid online. Defaults to totalAmount
   note?:        string;
   weightKg?:    number;
   // Our order id at J&T; defaults to the order number. A re-ship after a cancelled
@@ -167,12 +168,15 @@ export function buildAddOrderBiz(order: JTOrderInput): { ok: true; biz: Record<s
   if (!senderAddr.ok) return { ok: false, error: `عنوان الراسل (XENO_PROVINCE / XENO_CITY / XENO_AREA): ${senderAddr.error}` };
 
   const goodsType = process.env.JT_GOODS_TYPE ?? "ITN16"; // ITN16 = Others
-  const amount    = String(Math.max(0, Math.round(order.totalAmount * 100) / 100));
+  const money     = (n: number) => String(Math.max(0, Math.round(n * 100) / 100));
+  const amount    = money(order.codAmount ?? order.totalAmount);   // to collect
+  const declared  = money(order.totalAmount);
+  const paid      = Number(amount) === 0;
   const skuText   = skuSummary(order.items) || "منتجات";
   const itemsText = itemsDetail(order.items) || "منتجات";
   const pieces    = order.items.reduce((n, i) => n + i.qty, 0);
   // Our print page draws an items table over this box; the text stays as a fallback
-  const remark    = [skuText, `${pieces} قطعة: ${itemsText}`, order.note?.trim()].filter(Boolean).join(" | ");
+  const remark    = [paid ? "مدفوع PAID" : "", skuText, `${pieces} قطعة: ${itemsText}`, order.note?.trim()].filter(Boolean).join(" | ");
   const street    = (order.address || receiverAddr.area).slice(0, 200);
 
   const biz = {
@@ -226,7 +230,7 @@ export function buildAddOrderBiz(order: JTOrderInput): { ok: true; biz: Record<s
       itemName:      skuText.slice(0, 30),
       englishName:   skuText.slice(0, 60),
       number:        1,                                  // spec: ≤ 1
-      itemValue:     amount,
+      itemValue:     declared,
       priceCurrency: "EGP",
       desc:          itemsText.slice(0, 100),
     }],
