@@ -16,7 +16,7 @@ import { useToast } from "@/components/ui/Toast";
 import type { XenoOrder } from "@/lib/shopify/orders";
 import { ShipModal } from "@/components/orders/ShipModal";
 import { neighboursFromList } from "@/lib/order-nav";
-import { reviewStatus, withStatus, type ReviewStatus } from "@/lib/order-status";
+import { reviewStatus, withStatus, ordersCountLabel, type ReviewStatus } from "@/lib/order-status";
 import { printOrderLabel } from "@/lib/print-label";
 import { useConfirm } from "@/components/ui/ConfirmDialog";
 import type { AddressValue } from "@/components/orders/AddressPicker";
@@ -453,6 +453,7 @@ function TagManager({ tags, orderId, onUpdate }: TagManagerProps) {
 // ── Main Component ────────────────────────────────────────────────────────────
 interface OrderDetailsClientProps {
   order: XenoOrder;
+  history?: { action: string; detail: string; user: string; at: string }[];
 }
 
 // Up = the order above this one in the list, down = the one below it.
@@ -572,7 +573,7 @@ function StatusMenu({ order, label, variant, onChange }: {
   );
 }
 
-export function OrderDetailsClient({ order: initialOrder }: OrderDetailsClientProps) {
+export function OrderDetailsClient({ order: initialOrder, history = [] }: OrderDetailsClientProps) {
   const [order,          setOrder]          = useState(initialOrder);
   const [editOpen,       setEditOpen]       = useState(false);
   const [editItemsOpen,  setEditItemsOpen]  = useState(false);
@@ -773,6 +774,13 @@ export function OrderDetailsClient({ order: initialOrder }: OrderDetailsClientPr
                 </div>
                 <div>
                   <p className="text-sm font-semibold text-[var(--text-primary)]">{order.customerName}</p>
+                  {order.customerOrdersCount != null && (
+                    <span className={`inline-block mt-0.5 text-[10.5px] font-semibold px-2 py-0.5 rounded-full ${
+                      order.customerOrdersCount > 1 ? "bg-[var(--primary-light)] text-[var(--primary)]" : "bg-[var(--bg-base)] text-[var(--text-muted)]"
+                    }`}>
+                      {ordersCountLabel(order.customerOrdersCount)}
+                    </span>
+                  )}
                   <p className="text-[11px] text-[var(--text-muted)]">{order.email}</p>
                 </div>
               </div>
@@ -861,6 +869,30 @@ export function OrderDetailsClient({ order: initialOrder }: OrderDetailsClientPr
                 </div>
               )}
             </div>
+          </div>
+
+          {/* Who did what — team actions on this order (activity_log) */}
+          <div className="card p-5">
+            <h2 className="text-section-title mb-3">سجل الطلب</h2>
+            {history.length === 0 ? (
+              <p className="text-xs text-[var(--text-muted)]">لسه محدش عمل حاجة على الطلب ده من السيستم.</p>
+            ) : (
+              <ol className="space-y-3">
+                {history.map((h, i) => (
+                  <li key={i} className="flex gap-2.5">
+                    <span className="mt-1.5 w-2 h-2 rounded-full bg-[var(--primary)] flex-shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-xs text-[var(--text-primary)] leading-relaxed">
+                        <span className="font-bold">{h.user}</span> — {h.detail}
+                      </p>
+                      <p className="text-[10.5px] text-[var(--text-muted)]">
+                        {new Date(h.at).toLocaleString("ar-EG", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                      </p>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            )}
           </div>
         </div>
       </div>

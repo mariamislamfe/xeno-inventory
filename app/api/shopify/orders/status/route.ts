@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logOrderAction } from "@/lib/audit";
 import { requireAdmin } from "@/lib/auth/requireAdmin";
 import { setReviewStatus } from "@/lib/order-status-server";
 
@@ -91,7 +92,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "shopifyId and action required" }, { status: 400 });
     }
 
-    let result: { ok: boolean; error?: string };
+    let result: { ok: boolean; error?: string; orderNumber?: string };
     if (action === "fulfill") {
       result = await fulfillOrder(Number(shopifyId));
     } else if (action === "cancel") {
@@ -115,6 +116,15 @@ export async function POST(req: NextRequest) {
 
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: 422 });
+    }
+    const STATUS_AR: Record<string, string> = {
+      unconfirm: "جديد", wait: "انتظار", postpone: "مؤجل", confirm: "مكتمل", cancel: "ملغي",
+    };
+    const num = "orderNumber" in result && result.orderNumber ? `${result.orderNumber} ` : "";
+    if (STATUS_AR[action]) {
+      await logOrderAction(shopifyId, "status", `غيّر حالة ${num}لـ «${STATUS_AR[action]}»`, { status: action });
+    } else if (action === "delete") {
+      await logOrderAction(shopifyId, "delete", "مسح الطلب نهائياً");
     }
     return NextResponse.json({ ok: true });
   } catch (err) {

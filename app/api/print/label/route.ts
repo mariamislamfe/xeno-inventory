@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logOrderAction } from "@/lib/audit";
 import { supabaseAdmin } from "@/lib/supabase/client";
 import { printJTOrder } from "@/lib/jt/client";
 import { getLabelData } from "@/lib/label-items";
@@ -52,6 +53,9 @@ export async function POST(req: NextRequest) {
     user_name: "النظام",
     metadata:  { order_number: ship.order_number, tracking_number: ship.tracking_number },
   });
+
+  await logOrderAction(shopify_order_id, "print", `طبع بوليصة ${ship.order_number} — ${ship.tracking_number}`,
+    { tracking_number: ship.tracking_number });
 
   return NextResponse.json({ ok: true, pdfBase64: res.pdfBase64, url: res.url, items, receiver, sender: senderInfo() });
 }

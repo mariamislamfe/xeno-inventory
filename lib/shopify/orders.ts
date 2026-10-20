@@ -83,6 +83,9 @@ export interface XenoOrder {
   note?: string;
   tags: string[];
   createdAt: string;
+  customerId?: number;
+  customerOrdersCount?: number;                                         // all their orders, this one included
+  lastAction?: { action: string; detail: string; user: string; at: string };  // latest team action (activity_log)
 }
 
 // Reverse map: Shopify English province name → Arabic
@@ -155,6 +158,7 @@ export function normalizeOrder(o: ShopifyOrderRaw): XenoOrder {
     orderNumber: o.name,
     customerName: `${firstName} ${lastName}`.trim() || o.email,
     customerPhone: addr?.phone ?? o.phone ?? "",
+    customerId:  o.customer?.id ?? undefined,
     email:       o.email,
     address:     addr?.address1 ?? "",
     city:        addr?.city ?? "",

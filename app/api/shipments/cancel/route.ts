@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logOrderAction } from "@/lib/audit";
 import { supabaseAdmin } from "@/lib/supabase/client";
 import { cancelJTOrder, getJTOrderIdByWaybill } from "@/lib/jt/client";
 import { setReviewStatus } from "@/lib/order-status-server";
@@ -38,6 +39,9 @@ export async function POST(req: NextRequest) {
 
   await supabaseAdmin.from("shipments").delete().eq("id", ship.id);
   const statusRes = await setReviewStatus(Number(shopify_order_id), "cancelled");
+  await logOrderAction(shopify_order_id, "cancel_shipment",
+    `ألغى شحنة ${ship.order_number} على J&T (${ship.tracking_number}) وحوّل الطلب لـ «ملغي»`,
+    { tracking_number: ship.tracking_number, txlogisticId });
   await supabaseAdmin.from("activity_log").insert({
     type:      "shipment",
     action:    "cancelled",

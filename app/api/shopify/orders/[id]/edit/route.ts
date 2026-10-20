@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logOrderAction } from "@/lib/audit";
 import { editShopifyOrderItems } from "@/lib/shopify/order-edit";
 import type { EditItemInput, OriginalItemInput } from "@/lib/shopify/order-edit";
 
@@ -37,5 +38,7 @@ export async function POST(
     return NextResponse.json({ error: result.error }, { status: 422 });
   }
 
+  await logOrderAction(shopifyOrderId, "edit_items",
+    `عدّل منتجات الطلب: ${body.items.map((i) => `${(i as { name?: string }).name ?? "منتج"} ×${(i as { qty?: number }).qty ?? ""}`).join("، ")}`.slice(0, 300));
   return NextResponse.json({ ok: true });
 }

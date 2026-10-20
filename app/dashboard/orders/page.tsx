@@ -6,7 +6,7 @@ import dynamic from "next/dynamic";
 import { RefreshCw, Eye, Printer, Truck, Loader2, Search, ChevronDown, Tag, X, Plus, Save, CheckCircle2, XCircle, Trash2, RotateCcw, Clock, CalendarClock } from "lucide-react";
 import type { AddressValue } from "@/components/orders/AddressPicker";
 import { phoneKey } from "@/lib/phone";
-import { reviewStatus, withStatus, type ReviewStatus } from "@/lib/order-status";
+import { reviewStatus, withStatus, ordersCountLabel, type ReviewStatus } from "@/lib/order-status";
 import { GOV_EN } from "@/lib/shopify/provinces";
 import { ShipModal } from "@/components/orders/ShipModal";
 import { printOrderLabel } from "@/lib/print-label";
@@ -531,10 +531,11 @@ export default function OrdersPage() {
 
   // Deleting orders is a manager-only feature (also enforced by the API)
   const [isAdmin, setIsAdmin] = useState(false);
+  const [meName,  setMeName]  = useState("أنا");   // shown in "آخر إجراء" right after an action
   useEffect(() => {
     fetch("/api/auth/me")
       .then((r) => r.json())
-      .then((d) => setIsAdmin(d?.user?.role === "admin"))
+      .then((d) => { setIsAdmin(d?.user?.role === "admin"); if (d?.user?.fullName) setMeName(d.user.fullName); })
       .catch(() => {});
   }, []);
 
@@ -575,9 +576,11 @@ export default function OrdersPage() {
 
   // Reflect a successful action in the local list (no refetch needed)
   function applyActionLocally(ids: Set<string>, action: OrderAction, tracking?: Map<string, string>) {
+    const at = new Date().toISOString();
     if (action === "ship") {
       setOrders((prev) => prev.map((o) => tracking?.has(o.id)
-        ? { ...o, trackingNumber: tracking.get(o.id)!, shippingProvider: "J&T Express" } : o));
+        ? { ...o, trackingNumber: tracking.get(o.id)!, shippingProvider: "J&T Express",
+            lastAction: { action: "ship", detail: `شحن على J&T — ${tracking.get(o.id)}`, user: meName, at } } : o));
       return;
     }
     if (action === "delete") {
@@ -590,7 +593,8 @@ export default function OrdersPage() {
       const next: ReviewStatus =
         action === "wait" ? "waiting" : action === "postpone" ? "postponed"
         : action === "cancel" ? "cancelled" : action === "confirm" ? "confirmed" : "new";
-      return { ...o, tags: withStatus(o.tags, next) };
+      return { ...o, tags: withStatus(o.tags, next),
+        lastAction: { action: "status", detail: `غيّر الحالة لـ «${REVIEW_DISPLAY[next].label}»`, user: meName, at } };
     }));
   }
 
@@ -1018,6 +1022,7 @@ export default function OrdersPage() {
                     <th>تاجز Shopify</th>
                     <th>رقم التتبع</th>
                     <th>التاريخ</th>
+                    <th>آخر إجراء</th>
                     <th className="text-center">إجراءات</th>
                   </tr>
                 </thead>
@@ -1045,6 +1050,12 @@ export default function OrdersPage() {
                           <div>
                             <p className="font-semibold text-[var(--text-primary)] text-xs">{order.customerName}</p>
                             <p className="text-[11px] text-[var(--text-muted)] font-mono" dir="ltr">{order.customerPhone}</p>
+                            {order.customerOrdersCount != null && order.customerOrdersCount > 1 && (
+                              <span className="inline-block mt-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[var(--primary-light)] text-[var(--primary)]"
+                                title="عدد طلبات العميل في Shopify، الطلب ده منهم">
+                                🔁 {ordersCountLabel(order.customerOrdersCount)}
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td>
@@ -1161,6 +1172,16 @@ export default function OrdersPage() {
                         </td>
                         <td>
                           <span className="text-[11px] text-[var(--text-muted)] whitespace-nowrap">{formatDate(order.createdAt)}</span>
+                        </td>
+                        {/* Who last touched the order from the dashboard */}
+                        <td className="min-w-[120px] max-w-[180px]">
+                          {order.lastAction ? (
+                            <div title={order.lastAction.detail}>
+                              <p className="text-[11px] font-bold text-[var(--text-primary)] truncate">{order.lastAction.user}</p>
+                              <p className="text-[10.5px] text-[var(--text-secondary)] truncate">{order.lastAction.detail}</p>
+                              <p className="text-[10px] text-[var(--text-muted)]">{formatDate(order.lastAction.at)}</p>
+                            </div>
+                          ) : <span className="text-[11px] text-[var(--text-muted)]">—</span>}
                         </td>
                         <td>
                           <div className="flex items-center justify-center gap-1">

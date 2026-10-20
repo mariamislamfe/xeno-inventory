@@ -32,3 +32,8 @@ export function withStatus(tags: string[], status: ReviewStatus): string[] {
   const kept = tags.map((x) => x.trim()).filter((x) => x && !isStatusTag(x));
   return status === "new" ? kept : [...kept, STATUS_TAG[status]];
 }
+
+/** "3 طلبات" — how many orders a customer has in Shopify (the current one included). */
+export function ordersCountLabel(n: number) {
+  return n <= 1 ? "أول طلب" : n === 2 ? "طلبين" : n <= 10 ? `${n} طلبات` : `${n} طلب`;
+}

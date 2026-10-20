@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { normalizeOrder } from "@/lib/shopify/orders";
 import type { ShopifyOrderRaw } from "@/lib/shopify/orders";
 import { withShipmentTracking } from "@/lib/shipments";
+import { withCustomerCountsAndActions } from "@/lib/shopify/customer-counts";
+import { orderHistory, type OrderHistoryEntry } from "@/lib/audit";
 import { OrderDetailsClient } from "./OrderDetailsClient";
 
 interface OrderPageProps {
@@ -18,6 +20,7 @@ export default async function OrderPage({ params }: OrderPageProps) {
   if (!SHOP || !TOKEN) notFound();
 
   let order;
+  let history: OrderHistoryEntry[] = [];
   try {
     const resp = await fetch(
       `https://${SHOP}/admin/api/${VERSION}/orders/${id}.json`,
@@ -25,11 +28,12 @@ export default async function OrderPage({ params }: OrderPageProps) {
     );
     if (!resp.ok) notFound();
     const data = await resp.json() as { order: ShopifyOrderRaw };
-    [order] = await withShipmentTracking([normalizeOrder(data.order)]);
+    [order] = await withCustomerCountsAndActions(await withShipmentTracking([normalizeOrder(data.order)]));
+    history = await orderHistory(order.shopifyId);
   } catch {
     notFound();
   }
 
   // key: a fresh client state when stepping to another order with the arrows
-  return <OrderDetailsClient key={order.shopifyId} order={order} />;
+  return <OrderDetailsClient key={order.shopifyId} order={order} history={history} />;
 }

@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logOrderAction } from "@/lib/audit";
 import { normalizeOrder } from "@/lib/shopify/orders";
 import type { ShopifyOrderRaw } from "@/lib/shopify/orders";
 import { withShipmentTracking } from "@/lib/shipments";
+import { withCustomerCountsAndActions } from "@/lib/shopify/customer-counts";
 import { GOV_EN } from "@/lib/shopify/provinces";
 
 const SHOP    = process.env.SHOPIFY_SHOP;
@@ -26,7 +28,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     if (!resp.ok) return NextResponse.json({ error: `Shopify ${resp.status}` }, { status: resp.status });
 
     const data  = await resp.json() as { order: ShopifyOrderRaw };
-    const [order] = await withShipmentTracking([normalizeOrder(data.order)]);
+    const [order] = await withCustomerCountsAndActions(await withShipmentTracking([normalizeOrder(data.order)]));
     return NextResponse.json({ order });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
@@ -73,6 +75,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
     const data  = await resp.json() as { order: ShopifyOrderRaw };
     const order = normalizeOrder(data.order);
+    const changed = [phone && "الهاتف", (address1 || city || province) && "العنوان", name && "الاسم", note !== undefined && "الملاحظات", tags !== undefined && "التاجز"]
+      .filter(Boolean).join("، ");
+    await logOrderAction(id, "edit", `عدّل بيانات ${order.orderNumber}${changed ? ` (${changed})` : ""}`);
     return NextResponse.json({ ok: true, order });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });

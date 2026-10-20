@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logOrderAction } from "@/lib/audit";
 import { supabaseAdmin } from "@/lib/supabase/client";
 import { createJTOrder } from "@/lib/jt/client";
 import { saveShipment } from "@/lib/shipments";
@@ -131,6 +132,11 @@ export async function POST(req: NextRequest) {
         shopifyOrder?.customerName ?? o.customer_name,
         jtResult.trackingNumber,
       );
+    }
+
+    if (jtResult.ok && jtResult.trackingNumber) {
+      await logOrderAction(o.shopify_order_id, "ship", `شحن ${o.order_number} على J&T — ${jtResult.trackingNumber}`,
+        { tracking_number: jtResult.trackingNumber, txlogisticId });
     }
 
     results.push({

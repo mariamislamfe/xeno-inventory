@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logOrderAction } from "@/lib/audit";
 import { normalizeOrder, currentQty } from "@/lib/shopify/orders";
 import type { ShopifyOrderRaw } from "@/lib/shopify/orders";
 import { toE164 } from "@/lib/phone";
@@ -170,12 +171,46 @@ async function mergeOrders(shopifyIds: number[]) {
       orders.flatMap(o => o.tags ? o.tags.split(",").map(t => t.trim()) : [])
     )].filter((t) => t && !isStatusTag(t)).join(",");
 
+    // ── Money ──
+    // One shipment → one shipping fee (the highest of the originals), and whatever
+    // the customer already paid online on the originals carries over: all paid →
+    // "paid", some paid → "partially_paid" (J&T then collects only the rest).
+    type MoneyFields = {
+      total_price?: string; current_total_price?: string; total_outstanding?: string | null;
+      shipping_lines?: { title: string; price: string; code?: string | null; source?: string | null }[];
+    };
+    const money = orders as unknown as MoneyFields[];
+    type ShipLine = NonNullable<MoneyFields["shipping_lines"]>[number];
+    let shipLine: ShipLine | null = null;
+    for (const l of money.flatMap((m) => m.shipping_lines ?? [])) {
+      if (!shipLine || parseFloat(l.price) > parseFloat(shipLine.price)) shipLine = l;
+    }
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+    const paidSoFar = round2(money.reduce((sum, m) => {
+      const total = parseFloat(m.current_total_price ?? m.total_price ?? "0");
+      const out   = m.total_outstanding != null && m.total_outstanding !== "" ? parseFloat(m.total_outstanding) : total;
+      return sum + Math.max(0, total - out);
+    }, 0));
+    const itemsTotal  = lineItems.reduce((sum, i) => sum + i.quantity * parseFloat(String(i.price)), 0);
+    const mergedTotal = round2(itemsTotal + (shipLine ? parseFloat(shipLine.price) : 0));
+    const paidNow     = round2(Math.min(paidSoFar, mergedTotal));
+    const financialStatus = paidNow <= 0 ? "pending" : paidNow >= mergedTotal - 0.01 ? "paid" : "partially_paid";
+    const moneyNote = paidSoFar > 0
+      ? `مدفوع أونلاين ${paidSoFar} من ${mergedTotal} ج.م${paidSoFar > mergedTotal + 0.01 ? ` — دفع زيادة ${round2(paidSoFar - mergedTotal)} ج.م` : ""}`
+      : "";
+
     const newOrderPayload = {
       email:            base.email,
-      financial_status: "pending",
+      financial_status: financialStatus,
+      ...(paidNow > 0 ? {
+        transactions: [{ kind: "sale", status: "success", amount: paidNow.toFixed(2), gateway: "manual" }],
+      } : {}),
+      ...(shipLine ? {
+        shipping_lines: [{ title: shipLine.title, price: shipLine.price, code: shipLine.code ?? "standard", source: shipLine.source ?? "xeno" }],
+      } : {}),
       send_receipt:     false,
       send_fulfillment_receipt: false,
-      note:             notes || undefined,
+      note:             [notes, moneyNote].filter(Boolean).join(" | ") || undefined,
       tags:             tags ? `${tags},xeno_merged` : "xeno_merged",
       ...(base.customer?.id ? { customer: { id: base.customer.id } } : {}),
       ...(addrBlock ? { shipping_address: addrBlock, billing_address: addrBlock } : {}),
@@ -202,7 +237,11 @@ async function mergeOrders(shopifyIds: number[]) {
       if (await removeOrder(Number(id))) deletedIds.push(Number(id));
     }
 
-    return NextResponse.json({ ok: true, order: normalizeOrder(created.order), deletedIds }, { status: 201 });
+    const merged = normalizeOrder(created.order);
+    await logOrderAction(merged.shopifyId, "merge",
+      `دمج ${orders.map((o) => o.name).join(" + ")} في ${merged.orderNumber}${moneyNote ? ` — ${moneyNote}` : ""}`,
+      { from: orders.map((o) => o.id), financial_status: financialStatus });
+    return NextResponse.json({ ok: true, order: merged, deletedIds }, { status: 201 });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }

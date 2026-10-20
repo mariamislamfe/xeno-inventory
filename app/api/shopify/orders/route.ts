@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logOrderAction } from "@/lib/audit";
 import { normalizeOrder } from "@/lib/shopify/orders";
 import type { ShopifyOrderRaw, XenoOrder } from "@/lib/shopify/orders";
 import { phoneKey, toE164, toLocal } from "@/lib/phone";
 import { withShipmentTracking } from "@/lib/shipments";
 import { GOV_EN } from "@/lib/shopify/provinces";
+import { withCustomerCountsAndActions } from "@/lib/shopify/customer-counts";
 
 const SHOP    = process.env.SHOPIFY_SHOP;
 const TOKEN   = process.env.SHOPIFY_ACCESS_TOKEN;
@@ -58,7 +60,7 @@ export async function GET(req: NextRequest) {
     const nextPageInfo = nextMatch ? decodeURIComponent(nextMatch[1]) : null;
 
     const data   = (await resp.json()) as { orders: ShopifyOrderRaw[] };
-    const orders = await withShipmentTracking(data.orders.map(normalizeOrder));
+    const orders = await withCustomerCountsAndActions(await withShipmentTracking(data.orders.map(normalizeOrder)));
 
     return NextResponse.json({
       orders,
@@ -227,6 +229,7 @@ export async function POST(req: NextRequest) {
 
     const data  = await resp.json() as { order: ShopifyOrderRaw };
     const order = normalizeOrder(data.order);
+    await logOrderAction(order.shopifyId, "create", `عمل الطلب ${order.orderNumber} من السيستم`);
     return NextResponse.json({ ok: true, order, existingOpenOrders }, { status: 201 });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });

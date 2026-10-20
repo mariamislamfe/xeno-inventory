@@ -23,7 +23,7 @@ async function sfetch(url: string, init?: RequestInit, attempts = 4): Promise<Re
 // Set the dashboard status (جديد / انتظار / مكتمل / ملغي) — our own tags only, so
 // Shopify's own tags are left alone — and record it in xeno_ops.
 // (Shopify's own cancel can't be undone, so it's only used right before deleting.)
-export async function setReviewStatus(shopifyId: number, status: ReviewStatus): Promise<{ ok: boolean; error?: string }> {
+export async function setReviewStatus(shopifyId: number, status: ReviewStatus): Promise<{ ok: boolean; error?: string; orderNumber?: string }> {
   const orderUrl = `https://${SHOP}/admin/api/${VERSION}/orders/${shopifyId}.json`;
   const getResp = await sfetch(orderUrl, { headers: h(), cache: "no-store" });
   if (!getResp.ok) return { ok: false, error: `order fetch failed: ${getResp.status}` };
@@ -48,5 +48,5 @@ export async function setReviewStatus(shopifyId: number, status: ReviewStatus): 
     op_status:        status === "new" ? "pending" : status,
     updated_at:       new Date().toISOString(),
   }, { onConflict: "shopify_order_id" });
-  return { ok: true };
+  return { ok: true, orderNumber: order.name };
 }
