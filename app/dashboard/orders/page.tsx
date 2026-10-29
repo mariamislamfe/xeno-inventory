@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { RefreshCw, Eye, Printer, Truck, Loader2, Search, ChevronDown, Tag, X, Plus, Save, CheckCircle2, XCircle, Trash2, RotateCcw, Clock, CalendarClock } from "lucide-react";
+import { RefreshCw, Eye, Printer, Truck, Loader2, Search, ChevronDown, Tag, X, Plus, Save, CheckCircle2, XCircle, Trash2, RotateCcw, Clock, CalendarClock, CalendarDays } from "lucide-react";
 import type { AddressValue } from "@/components/orders/AddressPicker";
 import { phoneKey } from "@/lib/phone";
 import { reviewStatus, withStatus, ordersCountLabel, type ReviewStatus } from "@/lib/order-status";
@@ -497,6 +497,24 @@ const TABS: { key: TabKey; label: string; shopifyParam: Record<string, string> }
   { key: "postponed",   label: "⏰ مؤجلة",    shopifyParam: { status: "any",    tag: "xeno-postponed" } },
 ];
 
+// ── Day filter (same idea as the print page) ───────────────────────────
+// Day in the viewer's local time (YYYY-MM-DD)
+function localDay(d: Date) {
+  return d.toLocaleDateString("en-CA");
+}
+function shiftDay(days: number) {
+  const d = new Date(); d.setDate(d.getDate() + days);
+  return localDay(d);
+}
+// Shopify created_at bounds covering that whole local day
+function dayRange(day: string): Record<string, string> {
+  if (!day) return {};
+  return {
+    created_at_min: new Date(`${day}T00:00:00`).toISOString(),
+    created_at_max: new Date(`${day}T23:59:59.999`).toISOString(),
+  };
+}
+
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString("ar-EG", {
     year: "numeric", month: "short", day: "numeric",
@@ -514,6 +532,7 @@ export default function OrdersPage() {
   const [search,      setSearch]      = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [tagFilter,   setTagFilter]   = useState("");
+  const [day,         setDay]         = useState("");   // "" = all days
   const [totalCount,  setTotalCount]  = useState<number | null>(null);
   const [createOpen,  setCreateOpen]  = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -658,17 +677,17 @@ export default function OrdersPage() {
     }
   }
 
-  async function fetchCount(tab: TabKey) {
+  async function fetchCount(tab: TabKey, d: string) {
     try {
       const t  = TABS.find((t) => t.key === tab)!;
-      const qs = new URLSearchParams(t.shopifyParam).toString();
+      const qs = new URLSearchParams({ ...t.shopifyParam, ...dayRange(d) }).toString();
       const res  = await fetch(`/api/shopify/orders/count?${qs}`);
       const data = await res.json();
       setTotalCount(data.count ?? null);
     } catch { setTotalCount(null); }
   }
 
-  async function loadOrders(tab: TabKey, q: string, tag: string, page = 1, size = pageSize) {
+  async function loadOrders(tab: TabKey, q: string, tag: string, d: string, page = 1, size = pageSize) {
     setLoading(true);
     try {
       const t      = TABS.find((t) => t.key === tab)!;
@@ -679,6 +698,7 @@ export default function OrdersPage() {
       } else {
         if (q) params.set("query", q);
         if (tag && !t.shopifyParam.tag) params.set("tag", tag);
+        for (const [k, v] of Object.entries(dayRange(d))) params.set(k, v);
       }
 
       const res  = await fetch(`/api/shopify/orders?${params}`);
@@ -704,16 +724,16 @@ export default function OrdersPage() {
     }
   }
 
-  function resetAndLoad(tab: TabKey, q: string, tag: string, size = pageSize) {
+  function resetAndLoad(tab: TabKey, q: string, tag: string, d: string, size = pageSize) {
     cursors.current = [null];
     setCurrentPage(1);
-    loadOrders(tab, q, tag, 1, size);
-    fetchCount(tab);
+    loadOrders(tab, q, tag, d, 1, size);
+    fetchCount(tab, d);
   }
 
   useEffect(() => {
-    resetAndLoad(activeTab, search, tagFilter);
-  }, [activeTab, search, tagFilter]);
+    resetAndLoad(activeTab, search, tagFilter, day);
+  }, [activeTab, search, tagFilter, day]);
 
   // Lets an order page step to the order above / below it in this list
   useEffect(() => { saveOrderNav(orders.map((o) => o.id)); }, [orders]);
@@ -788,13 +808,13 @@ export default function OrdersPage() {
 
   function handlePageSizeChange(size: number) {
     setPageSize(size);
-    resetAndLoad(activeTab, search, tagFilter, size);
+    resetAndLoad(activeTab, search, tagFilter, day, size);
   }
 
   function goToPage(page: number) {
     if (page < 1 || (totalPages && page > totalPages)) return;
     if (page > 1 && !cursors.current[page - 1]) return; // cursor not yet known
-    loadOrders(activeTab, search, tagFilter, page);
+    loadOrders(activeTab, search, tagFilter, day, page);
   }
 
   return (
@@ -821,7 +841,7 @@ export default function OrdersPage() {
           <Button
             variant="secondary" size="sm"
             icon={loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={14} />}
-            onClick={() => resetAndLoad(activeTab, search, tagFilter)}
+            onClick={() => resetAndLoad(activeTab, search, tagFilter, day)}
             disabled={loading}
           >
             تحديث
@@ -888,6 +908,28 @@ export default function OrdersPage() {
             </select>
             <Tag size={13} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)] pointer-events-none" />
           </div>
+        </div>
+        {/* Day filter — applies to whichever tab is open */}
+        <div className="mt-3 flex items-center gap-2 flex-wrap">
+          <CalendarDays size={15} className="text-[var(--text-muted)]" />
+          <span className="text-xs font-semibold text-[var(--text-secondary)]">اليوم:</span>
+          {[
+            { value: "",            label: "كل الأيام" },
+            { value: shiftDay(0),   label: "النهارده" },
+            { value: shiftDay(-1),  label: "امبارح" },
+          ].map((c) => (
+            <button key={c.label} onClick={() => setDay(c.value)}
+              className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-colors ${day === c.value ? "bg-[var(--primary)] text-white" : "bg-[var(--bg-base)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"}`}>
+              {c.label}
+            </button>
+          ))}
+          <input type="date" value={day} onChange={(e) => setDay(e.target.value)}
+            className="form-input w-auto py-1 text-xs" title="اختار يوم من الكالندر" />
+          {day && (
+            <button onClick={() => setDay("")} className="text-[var(--text-muted)] hover:text-[var(--danger)] transition-colors" title="مسح">
+              <X size={13} />
+            </button>
+          )}
         </div>
         {tagFilter && (
           <div className="mt-2 flex items-center gap-2">
