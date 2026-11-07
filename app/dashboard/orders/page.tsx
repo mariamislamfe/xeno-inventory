@@ -5,7 +5,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { RefreshCw, Eye, Printer, Truck, Loader2, Search, ChevronDown, Tag, X, Plus, Save, CheckCircle2, XCircle, Trash2, RotateCcw, Clock, CalendarClock, CalendarDays } from "lucide-react";
 import type { AddressValue } from "@/components/orders/AddressPicker";
-import { phoneKey } from "@/lib/phone";
+import { namesMatch, findMergeGroups, mergeGroupKey } from "@/lib/merge";
 import { reviewStatus, withStatus, ordersCountLabel, type ReviewStatus } from "@/lib/order-status";
 import { GOV_EN } from "@/lib/shopify/provinces";
 import { ShipModal } from "@/components/orders/ShipModal";
@@ -453,27 +453,6 @@ function tagStyle(tag: string) {
   return TAG_COLORS[key] ?? "bg-[var(--bg-base)] text-[var(--text-muted)]";
 }
 
-// Normalize Arabic name for fuzzy matching (strip diacritics, unify alef forms, collapse spaces)
-function normalizeName(name: string): string {
-  return name
-    .trim()
-    .toLowerCase()
-    .replace(/[ً-ٰٟ]/g, "")   // strip tashkeel + superscript alef
-    .replace(/[أإآ]/g, "ا")                   // unify alef variants
-    .replace(/ة/g, "ه")                        // teh marbuta → heh
-    .replace(/\s+/g, " ");
-}
-
-function namesMatch(a: string, b: string): boolean {
-  const na = normalizeName(a);
-  const nb = normalizeName(b);
-  if (na === nb) return true;
-  // Accept if first word (first name) matches — handles "محمد" vs "محمد أحمد"
-  const firstA = na.split(" ")[0];
-  const firstB = nb.split(" ")[0];
-  return firstA.length >= 3 && firstA === firstB;
-}
-
 // ── Vrobo quick-filter tags ────────────────────────────────────────────
 const VROBO_TAGS = [
   { value: "",          label: "كل التاجز" },
@@ -564,34 +543,8 @@ export default function OrdersPage() {
   const selectedCount = useMemo(() => orders.filter((o) => selectedIds.has(o.id)).length, [orders, selectedIds]);
 
   // Detect mergeable groups: same phone AND matching name, all open/pending
-  const mergeGroups = useMemo(() => {
-    const groups = new Map<string, XenoOrder[]>();
-    for (const o of orders) {
-      if (o.status !== "pending" && o.status !== "processing") continue;
-      if (isCancelTagged(o)) continue;
-      if (o.trackingNumber) continue; // already sent to J&T — never merge/delete it
-      const phone = phoneKey(o.customerPhone); // +20 / 0020 / 0 prefixes → same key
-      if (!phone) continue;
-      // Group by phone first, then check name within group
-      if (!groups.has(phone)) groups.set(phone, []);
-      groups.get(phone)!.push(o);
-    }
-    const result = new Map<string, XenoOrder[]>();
-    for (const [phone, group] of groups) {
-      if (group.length < 2) continue;
-      // Split into sub-groups where all names match each other
-      const subGroups: XenoOrder[][] = [];
-      for (const order of group) {
-        const matched = subGroups.find((sg) => namesMatch(sg[0].customerName, order.customerName));
-        if (matched) matched.push(order);
-        else subGroups.push([order]);
-      }
-      subGroups.forEach((sg, i) => {
-        if (sg.length >= 2) result.set(`${phone}_${i}`, sg);
-      });
-    }
-    return result;
-  }, [orders]);
+  const mergeGroups = useMemo(() => findMergeGroups(orders), [orders]);
+  const mergeGroupsKey = [...mergeGroups.values()].map(mergeGroupKey).sort().join("|");
 
   // Reflect a successful action in the local list (no refetch needed)
   function applyActionLocally(ids: Set<string>, action: OrderAction, tracking?: Map<string, string>) {
@@ -738,20 +691,16 @@ export default function OrdersPage() {
   // Lets an order page step to the order above / below it in this list
   useEffect(() => { saveOrderNav(orders.map((o) => o.id)); }, [orders]);
 
-  // Auto-merge duplicate groups detected on the loaded page
+  // Auto-merge duplicate groups detected on the loaded page (the server also merges
+  // duplicates on its own; this just shows the result right away)
   const autoMergedKeys = useRef(new Set<string>());
   useEffect(() => {
     if (mergeGroups.size === 0) return;
 
-    const toMerge = [...mergeGroups.values()].filter(group => {
-      const key = group.map(o => o.shopifyId).sort().join(",");
-      return !autoMergedKeys.current.has(key);
-    });
+    const toMerge = [...mergeGroups.values()].filter(group => !autoMergedKeys.current.has(mergeGroupKey(group)));
     if (toMerge.length === 0) return;
 
-    toMerge.forEach(group =>
-      autoMergedKeys.current.add(group.map(o => o.shopifyId).sort().join(","))
-    );
+    toMerge.forEach(group => autoMergedKeys.current.add(mergeGroupKey(group)));
 
     Promise.all(
       toMerge.map(group =>
@@ -759,7 +708,7 @@ export default function OrdersPage() {
           method:  "POST",
           headers: { "Content-Type": "application/json" },
           body:    JSON.stringify({ shopifyIds: group.map(o => o.shopifyId) }),
-        }).then(r => r.json())
+        }).then(r => r.json()).catch(() => null)
       )
     ).then(results => {
       results.forEach((data, i) => {
@@ -771,9 +720,12 @@ export default function OrdersPage() {
       });
       const merged = results.filter(d => d?.ok).length;
       if (merged > 0) success("دمج تلقائي", `تم دمج ${merged} مجموعة طلبات مكررة`);
-    }).catch(() => {});
+      // Merged meanwhile by another device / the server → show the list as it is now
+      if (results.some(d => !d?.ok)) resetAndLoad(activeTab, search, tagFilter, day);
+    });
+  // Re-run whenever the set of duplicate groups changes (not just how many there are)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mergeGroups.size]);
+  }, [mergeGroupsKey]);
 
 
   function toggleSelect(id: string) {

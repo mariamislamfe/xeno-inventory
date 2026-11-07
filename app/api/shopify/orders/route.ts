@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { logOrderAction } from "@/lib/audit";
 import { normalizeOrder } from "@/lib/shopify/orders";
 import type { ShopifyOrderRaw, XenoOrder } from "@/lib/shopify/orders";
@@ -6,12 +6,15 @@ import { phoneKey, toE164, toLocal } from "@/lib/phone";
 import { withShipmentTracking } from "@/lib/shipments";
 import { GOV_EN } from "@/lib/shopify/provinces";
 import { withCustomerCountsAndActions } from "@/lib/shopify/customer-counts";
+import { isMergeCandidate } from "@/lib/merge";
+import { autoMergeDuplicates } from "@/lib/merge-server";
 
 const SHOP    = process.env.SHOPIFY_SHOP;
 const TOKEN   = process.env.SHOPIFY_ACCESS_TOKEN;
 const VERSION = process.env.SHOPIFY_API_VERSION ?? "2026-07";
 
 export const revalidate = 0;
+export const maxDuration = 60;
 
 export async function GET(req: NextRequest) {
   if (!SHOP || !TOKEN) return NextResponse.json({ error: "Shopify not configured" }, { status: 503 });
@@ -60,7 +63,13 @@ export async function GET(req: NextRequest) {
     const nextPageInfo = nextMatch ? decodeURIComponent(nextMatch[1]) : null;
 
     const data   = (await resp.json()) as { orders: ShopifyOrderRaw[] };
-    const orders = await withCustomerCountsAndActions(await withShipmentTracking(data.orders.map(normalizeOrder)));
+    // Tracking numbers and customer counts/last actions don't depend on each other
+    const base   = data.orders.map(normalizeOrder);
+    const [tracked, extras] = await Promise.all([withShipmentTracking(base), withCustomerCountsAndActions(base)]);
+    const orders = tracked.map((o, i) => ({ ...o, customerOrdersCount: extras[i].customerOrdersCount, lastAction: extras[i].lastAction }));
+
+    // Merge duplicates among all recent open orders, not just this page (at most once a minute)
+    after(() => autoMergeDuplicates());
 
     return NextResponse.json({
       orders,
@@ -230,7 +239,9 @@ export async function POST(req: NextRequest) {
     const data  = await resp.json() as { order: ShopifyOrderRaw };
     const order = normalizeOrder(data.order);
     await logOrderAction(order.shopifyId, "create", `عمل الطلب ${order.orderNumber} من السيستم`);
-    return NextResponse.json({ ok: true, order, existingOpenOrders }, { status: 201 });
+    // Only orders that may be merged: not ملغي on the dashboard and not shipped yet
+    const mergeable = (await withShipmentTracking(existingOpenOrders)).filter(isMergeCandidate);
+    return NextResponse.json({ ok: true, order, existingOpenOrders: mergeable }, { status: 201 });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }
