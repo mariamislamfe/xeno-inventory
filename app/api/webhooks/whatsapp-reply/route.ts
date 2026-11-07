@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/client";
 import { withStatus } from "@/lib/order-status";
+import { mergedInto } from "@/lib/merge-server";
 
 export async function POST(req: NextRequest) {
+  // No secret configured must not mean "anyone may call this"
   const secret = req.headers.get("x-wa-secret");
-  if (secret !== process.env.WA_SECRET)
+  if (!process.env.WA_SECRET || secret !== process.env.WA_SECRET)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { phone, status, shopify_order_id, order_number } = await req.json();
@@ -36,7 +38,18 @@ export async function POST(req: NextRequest) {
 
   const msg    = messages[0];
   const ordNum = msg.order_number ?? order_number ?? "؟";
-  const ordId  = msg.shopify_order_id ?? shopify_order_id;
+  let ordId    = msg.shopify_order_id ?? shopify_order_id;
+
+  // The customer answered the message of an order that has since been merged into
+  // another one (and deleted). The merged order also holds the other order's items,
+  // so the answer only goes on it as a note for the team — its status isn't changed.
+  let merged = false;
+  for (let hop = 0; ordId && hop < 3; hop++) {
+    const target = await mergedInto(Number(ordId)).catch(() => null);
+    if (!target) break;
+    ordId = target;
+    merged = true;
+  }
 
   // Update WA message status
   const waStatus = status === "confirmed" ? "delivered" : "read";
@@ -44,7 +57,7 @@ export async function POST(req: NextRequest) {
 
   // Also sync xeno_ops so the confirmation tab moves correctly
   const opStatus = status === "confirmed" ? "confirmed" : "cancelled";
-  if (ordId) {
+  if (ordId && !merged) {
     await supabaseAdmin.from("xeno_ops").upsert({
       shopify_order_id: ordId,
       order_number:     ordNum,
@@ -53,9 +66,10 @@ export async function POST(req: NextRequest) {
     }, { onConflict: "shopify_order_id" });
   }
 
-  const detail = status === "confirmed"
+  const detail = (status === "confirmed"
     ? `✅ العميل أكّد الطلب #${ordNum} عبر واتساب`
-    : `❌ العميل ألغى الطلب #${ordNum} عبر واتساب`;
+    : `❌ العميل ألغى الطلب #${ordNum} عبر واتساب`)
+    + (merged ? " — الطلب ده كان اتدمج في الطلب الحالي، راجعوه مع العميل" : "");
 
   // Log to activity
   await supabaseAdmin.from("activity_log").insert({
@@ -69,12 +83,12 @@ export async function POST(req: NextRequest) {
 
   // Post note to Shopify order timeline + set the order's status tag
   // (مكتمل / ملغي — reversible from the dashboard like any other status)
-  await addShopifyNote(ordId, detail, status === "confirmed" ? "confirmed" : "cancelled");
+  await addShopifyNote(ordId, detail, merged ? null : status === "confirmed" ? "confirmed" : "cancelled");
 
   return NextResponse.json({ ok: true });
 }
 
-async function addShopifyNote(shopifyOrderId: number | string, newNote: string, statusTag: "confirmed" | "cancelled") {
+async function addShopifyNote(shopifyOrderId: number | string, newNote: string, statusTag: "confirmed" | "cancelled" | null) {
   const shop    = process.env.SHOPIFY_SHOP;
   const token   = process.env.SHOPIFY_ACCESS_TOKEN;
   const version = process.env.SHOPIFY_API_VERSION ?? "2026-07";
@@ -86,9 +100,11 @@ async function addShopifyNote(shopifyOrderId: number | string, newNote: string, 
       `https://${shop}/admin/api/${version}/orders/${shopifyOrderId}.json?fields=id,note,tags`,
       { headers: { "X-Shopify-Access-Token": token }, cache: "no-store" }
     );
-    const current = getRes.ok ? ((await getRes.json())?.order ?? {}) : {};
+    // Without the current note, writing would wipe it — skip instead
+    if (!getRes.ok) { console.error("[whatsapp-reply] order fetch failed:", getRes.status); return; }
+    const current = (await getRes.json())?.order ?? {};
     const existingNote: string = current.note ?? "";
-    const tags = withStatus(String(current.tags ?? "").split(","), statusTag);
+    const tags = statusTag ? withStatus(String(current.tags ?? "").split(","), statusTag) : null;
 
     const combinedNote = existingNote
       ? `${existingNote}\n---\n${newNote}`
@@ -99,7 +115,7 @@ async function addShopifyNote(shopifyOrderId: number | string, newNote: string, 
       {
         method:  "PUT",
         headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
-        body:    JSON.stringify({ order: { id: shopifyOrderId, note: combinedNote, ...(getRes.ok ? { tags: tags.join(",") } : {}) } }),
+        body:    JSON.stringify({ order: { id: shopifyOrderId, note: combinedNote, ...(tags ? { tags: tags.join(",") } : {}) } }),
       }
     );
   } catch (e) {

@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { shopifyFetch } from "@/lib/shopify/client";
+
+const SHOP    = process.env.SHOPIFY_SHOP!;
+const TOKEN   = process.env.SHOPIFY_ACCESS_TOKEN!;
+const VERSION = process.env.SHOPIFY_API_VERSION ?? "2026-07";
 
 export const revalidate = 0;
+export const maxDuration = 60;   // 3 months ≈ 40 pages of orders
 
 interface ShopifyOrderLite {
   id: number;
@@ -17,18 +21,26 @@ interface ShopifyOrderLite {
 
 const FIELDS = "id,order_number,total_price,current_total_price,financial_status,fulfillment_status,tags,created_at,customer";
 
+// Follows Shopify's page cursor (Link header). The old since_id loop started from the
+// newest page, so since_id then returned those same orders again: reports counted the
+// newest ~250 twice and never reached older orders.
 async function fetchAllOrders(startDate: Date): Promise<ShopifyOrderLite[]> {
   const all: ShopifyOrderLite[] = [];
-  let sinceId: number | undefined;
+  let url: string | null =
+    `https://${SHOP}/admin/api/${VERSION}/orders.json?status=any&created_at_min=${startDate.toISOString()}&limit=250&fields=${FIELDS}`;
 
-  while (true) {
-    const base = `/orders.json?status=any&created_at_min=${startDate.toISOString()}&limit=250&fields=${FIELDS}`;
-    const url  = sinceId ? `${base}&since_id=${sinceId}` : base;
-    const data = await shopifyFetch<{ orders: ShopifyOrderLite[] }>(url);
-    const page = data.orders ?? [];
-    all.push(...page);
-    if (page.length < 250) break;
-    sinceId = page[page.length - 1].id;
+  let retries = 0;
+  for (let page = 0; page < 60 && url; page++) {
+    const res: Response = await fetch(url, { headers: { "X-Shopify-Access-Token": TOKEN }, cache: "no-store" });
+    if (res.status === 429 && retries++ < 5) {   // rate limited: wait and retry the same page
+      await new Promise((r) => setTimeout(r, (Number(res.headers.get("Retry-After")) || 1) * 1000));
+      page--;
+      continue;
+    }
+    if (!res.ok) throw new Error(`Shopify API ${res.status}: ${await res.text()}`);
+    const data = await res.json() as { orders: ShopifyOrderLite[] };
+    all.push(...(data.orders ?? []));
+    url = (res.headers.get("link") ?? "").match(/<([^>]+)>;\s*rel="next"/)?.[1] ?? null;
   }
 
   return all;

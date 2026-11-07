@@ -1,8 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import crypto from "crypto";
 import { supabaseAdmin } from "@/lib/supabase/client";
 import { normalizeOrder } from "@/lib/shopify/orders";
 import type { ShopifyOrderRaw } from "@/lib/shopify/orders";
+import { autoMergeDuplicates, mergedInto } from "@/lib/merge-server";
+
+// The work runs after Shopify gets its 200 (see below), with time for merges + WhatsApp
+export const maxDuration = 60;
 
 // Shopify signs each webhook with HMAC-SHA256 using the client secret
 function verifyHmac(rawBody: string, hmacHeader: string): boolean {
@@ -41,29 +45,33 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  let processed = false;
-  let errorMsg: string | null = null;
+  // Shopify wants a 200 within 5 seconds or it sends the webhook again (that's how
+  // one order used to get logged — and messaged — up to three times). Answer now and
+  // do the work right after.
+  after(async () => {
+    let processed = false;
+    let errorMsg: string | null = null;
 
-  try {
-    await handleTopic(topic, payload);
-    processed = true;
-  } catch (err) {
-    errorMsg = String(err);
-    console.error("[webhook] handler error:", errorMsg);
-  }
+    try {
+      await handleTopic(topic, payload);
+      processed = true;
+    } catch (err) {
+      errorMsg = String(err);
+      console.error("[webhook] handler error:", errorMsg);
+    }
 
-  // Always log — even on handler failure. Keep only a summary unless it failed:
-  // full order payloads (~8 KB each) would fill the database within months.
-  const p = payload as { id?: number; name?: string; financial_status?: string; fulfillment_status?: string };
-  await supabaseAdmin.from("webhook_log").insert({
-    topic,
-    shop,
-    payload:   processed ? { id: p?.id, name: p?.name, financial_status: p?.financial_status, fulfillment_status: p?.fulfillment_status } : payload,
-    processed,
-    error: errorMsg,
+    // Always log — even on handler failure. Keep only a summary unless it failed:
+    // full order payloads (~8 KB each) would fill the database within months.
+    const p = payload as { id?: number; name?: string; financial_status?: string; fulfillment_status?: string };
+    await supabaseAdmin.from("webhook_log").insert({
+      topic,
+      shop,
+      payload:   processed ? { id: p?.id, name: p?.name, financial_status: p?.financial_status, fulfillment_status: p?.fulfillment_status } : payload,
+      processed,
+      error: errorMsg,
+    });
   });
 
-  // Shopify requires 200 quickly — don't block on logging errors
   return NextResponse.json({ ok: true });
 }
 
@@ -107,6 +115,14 @@ async function onOrderCreate(raw: ShopifyOrderRaw) {
       city:           order.city,
     },
   });
+
+  // Same customer ordering again before shipping → merge into one order right away.
+  // The merged order comes back here as a new order and gets the WhatsApp message,
+  // so an order that just got merged away doesn't get one.
+  if (!order.tags.includes("xeno_merged")) {
+    await autoMergeDuplicates({ force: true });
+    if (await mergedInto(order.shopifyId).catch(() => null)) return;
+  }
 
   // Send WhatsApp confirmation if service is configured
   if (order.customerPhone) {
@@ -155,7 +171,7 @@ async function sendWhatsApp(raw: ShopifyOrderRaw, order: ReturnType<typeof norma
 
   try {
     const res  = await fetch(`${waUrl}/send`, {
-      signal: AbortSignal.timeout(4000),   // Shopify gives webhooks ~5s before retrying
+      signal: AbortSignal.timeout(15_000),   // runs after the reply to Shopify, so no 5s limit
       method: "POST",
       headers: { "Content-Type": "application/json", "x-wa-secret": waSecret },
       body: JSON.stringify({
@@ -180,6 +196,14 @@ async function sendWhatsApp(raw: ShopifyOrderRaw, order: ReturnType<typeof norma
     });
   } catch (err) {
     console.error("[webhook] WhatsApp send failed:", err);
+    await supabaseAdmin.from("whatsapp_messages").insert({
+      shopify_order_id: order.shopifyId,
+      order_number:     order.orderNumber,
+      phone:            order.customerPhone,
+      customer_name:    order.customerName,
+      template:         "order_confirmation",
+      status:           "failed",
+    });
   }
 }
 

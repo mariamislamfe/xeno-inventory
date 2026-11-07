@@ -19,6 +19,7 @@ export async function POST(req: NextRequest) {
       .select("tracking_number, status")
       .eq("shopify_order_id", o.shopify_order_id)
       .not("tracking_number", "is", null)
+      .limit(1)                // two rows for one order must not look like "not shipped"
       .maybeSingle();
 
     if (existing?.tracking_number) {
@@ -74,8 +75,33 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    // FIX-2: Fetch full order from Shopify to get FRESH address, phone, name, and items
-    const shopifyOrder = await fetchShopifyOrder(o.shopify_order_id);
+    // Being merged right now: the merge deletes this order, so shipping it would
+    // send its items twice (once now, once with the merged order)
+    const { data: mergeLock } = await supabaseAdmin
+      .from("xeno_ops")
+      .select("id")
+      .eq("shopify_order_id", -Number(o.shopify_order_id))
+      .eq("op_status", "merge_lock")
+      .limit(1);
+    if (mergeLock?.length) {
+      results.push({ order_number: o.order_number, ok: false, trackingNumber: undefined, error: "الطلب بيتدمج دلوقتي مع طلب تاني لنفس العميل — حدّثي الصفحة واشحني الطلب المدموج", skipped: false });
+      continue;
+    }
+
+    // FIX-2: Fetch full order from Shopify to get FRESH address, phone, name, and items.
+    // Never ship from the (possibly stale) page data alone: an order that was merged
+    // or deleted meanwhile would go out with a placeholder item and be shipped twice.
+    const fetched = await fetchShopifyOrder(o.shopify_order_id);
+    if (fetched === "not_found" || fetched === null || fetched.cancelled) {
+      results.push({
+        order_number: o.order_number, ok: false, trackingNumber: undefined, skipped: false,
+        error: fetched === "not_found" ? "الطلب ده مش موجود على Shopify (اتمسح أو اتدمج في طلب تاني) — حدّثي الصفحة"
+             : fetched === null      ? "تعذر جلب الطلب من Shopify — جرّبي تاني"
+             :                         "الطلب ملغي على Shopify",
+      });
+      continue;
+    }
+    const shopifyOrder = fetched;
 
     // FIX-5: Check xeno_ops for items_override (employee-edited items)
     const { data: xenoOp } = await supabaseAdmin
@@ -84,9 +110,7 @@ export async function POST(req: NextRequest) {
       .eq("shopify_order_id", o.shopify_order_id)
       .maybeSingle();
 
-    const itemsToShip = xenoOp?.items_override
-      ?? shopifyOrder?.items
-      ?? [{ name: "منتج", qty: 1 }];
+    const itemsToShip = xenoOp?.items_override ?? shopifyOrder.items;
 
     // J&T won't reuse an order id, so a re-ship after a cancelled shipment gets "53902-2"
     const orderNo      = String(o.order_number ?? "").replace(/^#/, "").trim();
@@ -190,10 +214,12 @@ async function fetchShopifyOrder(shopifyOrderId: number) {
 
   try {
     const res  = await fetch(
-      `https://${shop}/admin/api/${version}/orders/${shopifyOrderId}.json?fields=id,order_number,total_price,current_total_price,total_outstanding,financial_status,note,shipping_address,line_items`,
+      `https://${shop}/admin/api/${version}/orders/${shopifyOrderId}.json?fields=id,order_number,total_price,current_total_price,total_outstanding,financial_status,note,shipping_address,line_items,cancelled_at`,
       { headers: { "X-Shopify-Access-Token": token }, cache: "no-store", signal: controller.signal }
     );
     clearTimeout(timer);
+    if (res.status === 404) return "not_found" as const;
+    if (!res.ok) return null;
     const data = await res.json();
     const ord  = data?.order;
     if (!ord) return null;
@@ -212,6 +238,7 @@ async function fetchShopifyOrder(shopifyOrderId: number) {
       total:        orderTotal(ord),   // after edits, not the original total
       toCollect:    amountToCollect(ord),
       note:         (ord.note as string | null) ?? "",
+      cancelled:    Boolean(ord.cancelled_at),
       items:        (ord.line_items ?? [])
         .filter((li: { quantity: number; current_quantity?: number }) => currentQty(li) > 0)
         .map((li: { title: string; quantity: number; current_quantity?: number; sku?: string | null; variant_title?: string | null }) => ({
