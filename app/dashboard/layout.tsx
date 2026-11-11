@@ -18,9 +18,11 @@ const PAGE_TITLES: Record<string, string> = {
   "/dashboard/reports": "التقارير",
   "/dashboard/users": "المستخدمون",
   "/dashboard/settings": "الإعدادات",
+  "/dashboard/hany/products": "منتجات HANY",
 };
 
 const PATH_TITLE_MATCHERS = [
+  { pattern: /^\/dashboard\/orders\/hany\/[^/]+$/, title: "طلب HANY" },
   { pattern: /^\/dashboard\/orders\/[^/]+$/, title: "تفاصيل الطلب" },
   { pattern: /^\/dashboard\/products\/[^/]+$/, title: "تفاصيل المنتج" },
   { pattern: /^\/dashboard\/customers\/[^/]+$/, title: "تفاصيل العميل" },

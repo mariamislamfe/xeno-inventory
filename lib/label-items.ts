@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase/client";
 import { resolveJTAddress } from "@/lib/jt/address";
 import { toLocal } from "@/lib/phone";
 import { currentQty } from "@/lib/shopify/orders";
+import { isHanyId } from "@/lib/hany/ids";
 
 export interface LabelItem { qty: number; name: string; color: string; size: string; sku: string }
 // Receiver as J&T has it: the street plus the area/city/province from J&T's table
@@ -42,6 +43,9 @@ async function fetchShopifyOrder(id: number): Promise<ShopifyLabelOrder | null> 
 }
 
 export async function getLabelData(shopifyOrderId: number): Promise<{ items: LabelItem[]; receiver: LabelReceiver | null }> {
+  // Orders from the HANY website (loaded on demand: avoids an import cycle)
+  if (isHanyId(shopifyOrderId)) return (await import("@/lib/hany/fulfilment")).hanyLabelData(shopifyOrderId);
+
   const [order, op] = await Promise.all([
     fetchShopifyOrder(shopifyOrderId),
     supabaseAdmin.from("xeno_ops").select("items_override").eq("shopify_order_id", shopifyOrderId).maybeSingle(),

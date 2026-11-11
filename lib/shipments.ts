@@ -3,6 +3,7 @@
 import { supabaseAdmin } from "@/lib/supabase/client";
 import type { XenoOrder } from "@/lib/shopify/orders";
 import { traceJTBatch, statusFromScans } from "@/lib/jt/client";
+import { isHanyId } from "@/lib/hany/ids";
 
 export async function withShipmentTracking(orders: XenoOrder[]): Promise<XenoOrder[]> {
   const ids = orders.filter((o) => !o.trackingNumber).map((o) => o.shopifyId);
@@ -70,7 +71,7 @@ export async function syncShipmentStatuses(opts: { minAgeMs?: number; limit?: nu
   const minAge = opts.minAgeMs ?? 10 * 60 * 1000;
   const { data: rows, error } = await supabaseAdmin
     .from("shipments")
-    .select("id, tracking_number, status, shipped_at, delivered_at")
+    .select("id, shopify_order_id, order_number, tracking_number, status, shipped_at, delivered_at")
     .not("tracking_number", "is", null)
     .not("status", "in", "(delivered,returned)")
     .lt("updated_at", new Date(Date.now() - minAge).toISOString())
@@ -81,6 +82,7 @@ export async function syncShipmentStatuses(opts: { minAgeMs?: number; limit?: nu
 
   const scans = await traceJTBatch(rows.map((r) => r.tracking_number as string));
   let updated = 0;
+  const hanyChanges: { shopify_order_id: number; order_number: string | null; status: string }[] = [];
   const now = new Date().toISOString();
   for (const r of rows) {
     const list = scans.get(r.tracking_number as string);
@@ -92,9 +94,14 @@ export async function syncShipmentStatuses(opts: { minAgeMs?: number; limit?: nu
       patch.shipped_at = first?.scanTime ? new Date(first.scanTime.replace(" ", "T") + "+02:00").toISOString() : now;
     }
     if (status === "delivered" && !r.delivered_at) patch.delivered_at = now;
-    if (status !== r.status) updated++;
+    if (status !== r.status) {
+      updated++;
+      if (isHanyId(r.shopify_order_id)) hanyChanges.push({ shopify_order_id: Number(r.shopify_order_id), order_number: r.order_number, status });
+    }
     await supabaseAdmin.from("shipments").update(patch).eq("id", r.id);
   }
+  // HANY orders: tell the HANY store too (اتشحن / اتسلم), so its customer sees it
+  if (hanyChanges.length) await (await import("@/lib/hany/fulfilment")).pushHanyShipmentStatus(hanyChanges);
   return { checked: rows.length, updated };
 }
 

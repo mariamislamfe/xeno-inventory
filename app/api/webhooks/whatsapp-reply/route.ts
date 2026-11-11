@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/client";
 import { withStatus } from "@/lib/order-status";
 import { mergedInto } from "@/lib/merge-server";
+import { isHanyId } from "@/lib/hany/ids";
+import { applyHanyWhatsAppReply } from "@/lib/hany/fulfilment";
 
 export async function POST(req: NextRequest) {
   // No secret configured must not mean "anyone may call this"
@@ -57,7 +59,8 @@ export async function POST(req: NextRequest) {
 
   // Also sync xeno_ops so the confirmation tab moves correctly
   const opStatus = status === "confirmed" ? "confirmed" : "cancelled";
-  if (ordId && !merged) {
+  const hanyOrder = isHanyId(ordId);   // order from the HANY website (no Shopify order behind it)
+  if (ordId && !merged && !hanyOrder) {
     await supabaseAdmin.from("xeno_ops").upsert({
       shopify_order_id: ordId,
       order_number:     ordNum,
@@ -83,7 +86,12 @@ export async function POST(req: NextRequest) {
 
   // Post note to Shopify order timeline + set the order's status tag
   // (مكتمل / ملغي — reversible from the dashboard like any other status)
-  await addShopifyNote(ordId, detail, merged ? null : status === "confirmed" ? "confirmed" : "cancelled");
+  if (hanyOrder) {
+    // متأكد / ملغي on HANY + the answer in its internal notes
+    await applyHanyWhatsAppReply(Number(ordId), status === "confirmed", detail);
+  } else {
+    await addShopifyNote(ordId, detail, merged ? null : status === "confirmed" ? "confirmed" : "cancelled");
+  }
 
   return NextResponse.json({ ok: true });
 }

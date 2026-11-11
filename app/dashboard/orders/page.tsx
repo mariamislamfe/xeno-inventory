@@ -18,6 +18,8 @@ import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Modal } from "@/components/ui/Modal";
 import type { XenoOrder } from "@/lib/shopify/orders";
+import { HANY_STATUS, HANY_PAYMENT, NEXT_STATUS, SOURCE_DISPLAY, hanyOrderHref, hanyToXeno } from "@/lib/hany/labels";
+import type { HanyOrder, HanyOrderStatus } from "@/lib/hany/types";
 
 // ── Product Picker ─────────────────────────────────────────────────────
 interface ShopifyVariantSummary { id: number; title: string; sku: string; price: number }
@@ -390,6 +392,10 @@ function canShip(o: XenoOrder) {
 
 // Returns the tracking number for "ship"
 async function runOrderAction(order: XenoOrder, action: OrderAction): Promise<string | void> {
+  // HANY orders ship exactly like Shopify ones; their status has its own menu (next to the order)
+  if (isHany(order) && action !== "ship") {
+    throw new Error("حالة طلبات HANY بتتغير من القائمة اللي جنب الطلب");
+  }
   if (action === "ship") {
     const res = await fetch("/api/confirmation/ship", {
       method:  "POST",
@@ -476,6 +482,173 @@ const TABS: { key: TabKey; label: string; shopifyParam: Record<string, string> }
   { key: "postponed",   label: "⏰ مؤجلة",    shopifyParam: { status: "any",    tag: "xeno-postponed" } },
 ];
 
+// ── Which website (Shopify / HANY) ─────────────────────────────────────
+// HANY orders come from the HANY store API and sit in the same list, sorted by date.
+// No Shopify action (status tags, merge, J&T, delete) ever runs on them.
+type SourceFilter = "all" | "shopify" | "hany";
+const SOURCES: { key: SourceFilter; label: string }[] = [
+  { key: "all",     label: "كل المواقع" },
+  { key: "shopify", label: "Shopify" },
+  { key: "hany",    label: "HANY" },
+];
+function isHany(o: XenoOrder) { return o.source === "hany"; }
+function timeOf(o: XenoOrder) { return new Date(o.createdAt).getTime(); }
+
+// HANY has its own statuses (no انتظار / مؤجل)
+function hanyInTab(o: XenoOrder, tab: TabKey) {
+  const s = o.hany?.status;
+  switch (tab) {
+    case "any":         return true;
+    case "unfulfilled": return s === "pending";
+    case "confirmed":   return s !== "pending" && s !== "cancelled";
+    case "cancelled":   return s === "cancelled";
+    default:            return false;
+  }
+}
+function hanyMatches(o: XenoOrder, q: string) {
+  const n = q.trim().toLowerCase();
+  return !n || [o.orderNumber, o.customerName, o.customerPhone].some((v) => v.toLowerCase().includes(n));
+}
+
+function SourceChip({ order }: { order: XenoOrder }) {
+  const s = SOURCE_DISPLAY[isHany(order) ? "hany" : "shopify"];
+  return <span className={`inline-block mt-0.5 text-[9.5px] font-bold px-1.5 py-px rounded-full ${s.className}`}>{s.label}</span>;
+}
+
+// One HANY order in the list: its own statuses (through /api/hany); shipping, printing
+// and selection work like a Shopify row
+function HanyOrderRow({ order, onUpdated, confirm, selected, onToggle, bulkBusy, onShip, onPrint }: {
+  order: XenoOrder;
+  onUpdated: (o: XenoOrder) => void;
+  confirm: (o: { title: string; message?: React.ReactNode; confirmLabel?: string; danger?: boolean }) => Promise<boolean>;
+  selected: boolean;
+  onToggle: () => void;
+  bulkBusy: boolean;
+  onShip: () => void;
+  onPrint: () => void;
+}) {
+  const [menu, setMenu] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const { success, error } = useToast();
+  const status = order.hany!.status;
+  const st = HANY_STATUS[status];
+  const pm = HANY_PAYMENT[order.hany!.paymentStatus];
+  const next = NEXT_STATUS[status];
+
+  async function move(to: HanyOrderStatus) {
+    setMenu(false);
+    if (to === "cancelled" && !(await confirm({ title: `إلغاء ${order.orderNumber}؟`, message: "المنتجات هترجع لمخزون HANY، ومينفعش ترجعي الطلب بعد الإلغاء.", confirmLabel: "إلغاء الطلب", danger: true }))) return;
+    setBusy(true);
+    try {
+      const res  = await fetch(`/api/hany/orders/${encodeURIComponent(order.orderNumber)}/status`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: to }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.error ?? "فشل تحديث الحالة");
+      onUpdated({ ...hanyToXeno(data.order as HanyOrder), trackingNumber: order.trackingNumber, shippingProvider: order.shippingProvider,
+        lastAction: { action: "status", detail: `غيّر حالة طلب HANY ${order.orderNumber} لـ «${HANY_STATUS[to].label}»`, user: "أنا", at: new Date().toISOString() } });
+      success("تم التحديث", `${order.orderNumber} بقى «${HANY_STATUS[to].label}»`);
+    } catch (err) {
+      error("خطأ", err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const href = hanyOrderHref(order.orderNumber);
+  return (
+    <tr className={selected ? "bg-(--primary-light)" : ""}>
+      <td className="text-center">
+        <input type="checkbox" className="rounded" checked={selected} onChange={onToggle} disabled={bulkBusy} />
+      </td>
+      <td>
+        <Link href={href} className="font-mono text-[var(--primary)] font-bold text-xs hover:underline">{order.orderNumber}</Link>
+        <div><SourceChip order={order} /></div>
+      </td>
+      <td>
+        <p className="font-semibold text-[var(--text-primary)] text-xs">{order.customerName}</p>
+        <p className="text-[11px] text-[var(--text-muted)] font-mono" dir="ltr">{order.customerPhone}</p>
+      </td>
+      <td>
+        <div className="space-y-0.5">
+          {order.items.slice(0, 2).map((item) => (
+            <p key={item.id} className="text-[11px] text-[var(--text-muted)] truncate max-w-[130px]">
+              {item.productName}{item.variant && <span className="opacity-60"> · {item.variant}</span>}
+            </p>
+          ))}
+          {order.items.length > 2 && <p className="text-[10px] text-[var(--primary)]">+{order.items.length - 2} أخرى</p>}
+        </div>
+      </td>
+      <td>
+        <span className="font-bold text-[var(--text-primary)] text-xs font-numbers" dir="ltr">{order.total.toLocaleString("en-US")} ج.م</span>
+      </td>
+      <td>
+        {next.length > 0 ? (
+          <div className="relative inline-block">
+            <button onClick={() => setMenu(!menu)} className="flex items-center gap-1" disabled={busy}>
+              <Badge variant={st.variant} size="sm">
+                {busy && <Loader2 size={10} className="inline animate-spin ml-1" />}
+                {st.label}
+              </Badge>
+              <ChevronDown size={10} className="text-[var(--text-muted)]" />
+            </button>
+            {menu && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setMenu(false)} />
+                <div className="absolute z-20 top-full mt-1 right-0 flex flex-col bg-[var(--bg-card)] border border-[var(--border-color)] rounded-md shadow-lg overflow-hidden min-w-[110px]">
+                  {next.map((to) => (
+                    <button key={to} onClick={() => move(to)}
+                      className={`px-3 py-2 text-xs text-right hover:bg-[var(--bg-base)] transition-colors whitespace-nowrap ${to === "cancelled" ? "text-[var(--danger)]" : "text-[var(--text-primary)]"}`}>
+                      {HANY_STATUS[to].label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        ) : (
+          <Badge variant={st.variant} size="sm">{st.label}</Badge>
+        )}
+      </td>
+      <td><Badge variant={pm.variant} size="sm">{pm.label}</Badge></td>
+      <td><span className="text-[11px] text-[var(--text-muted)]">—</span></td>
+      <td>
+        {order.trackingNumber
+          ? <span className="text-[11px] font-mono text-[var(--success)]" dir="ltr">{order.trackingNumber}</span>
+          : <span className="text-[11px] text-[var(--text-muted)]">—</span>}
+      </td>
+      <td><span className="text-[11px] text-[var(--text-muted)] whitespace-nowrap">{formatDate(order.createdAt)}</span></td>
+      <td className="min-w-[120px] max-w-[180px]">
+        {order.lastAction ? (
+          <div title={order.lastAction.detail}>
+            <p className="text-[11px] font-bold text-[var(--text-primary)] truncate">{order.lastAction.user}</p>
+            <p className="text-[10.5px] text-[var(--text-secondary)] truncate">{order.lastAction.detail}</p>
+            <p className="text-[10px] text-[var(--text-muted)]">{formatDate(order.lastAction.at)}</p>
+          </div>
+        ) : <span className="text-[11px] text-[var(--text-muted)]">—</span>}
+      </td>
+      <td>
+        <div className="flex items-center justify-center gap-1">
+          <Link href={href} className="p-1.5 rounded-[var(--radius-sm)] text-[var(--text-muted)] hover:bg-[var(--bg-base)] hover:text-[var(--primary)] transition-colors" title="عرض">
+            <Eye size={14} />
+          </Link>
+          {order.trackingNumber ? (
+            <button onClick={onPrint} title="طباعة البوليصة"
+              className="p-1.5 rounded-[var(--radius-sm)] text-[var(--success)] hover:bg-[var(--success-light)] transition-colors">
+              <Printer size={14} />
+            </button>
+          ) : canShip(order) && (
+            <button onClick={onShip} title="إرسال للشحن"
+              className="p-1.5 rounded-[var(--radius-sm)] text-[var(--text-muted)] hover:bg-[var(--primary-light)] hover:text-[var(--primary)] transition-colors">
+              <Truck size={14} />
+            </button>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
 // ── Day filter (same idea as the print page) ───────────────────────────
 // Day in the viewer's local time (YYYY-MM-DD)
 function localDay(d: Date) {
@@ -523,6 +696,11 @@ export default function OrdersPage() {
   const [currentPage, setCurrentPage] = useState(1);
   // cursors[i] = cursor needed to fetch page i+1 (cursors[0]=null means page 1 starts fresh)
   const cursors = useRef<(string | null)[]>([null]);
+  // HANY: every order matching the tab / search / day (small), and the time span of each Shopify page
+  const [source,    setSource]    = useState<SourceFilter>("all");
+  const [hanyCount, setHanyCount] = useState(0);
+  const hanyAll    = useRef<XenoOrder[]>([]);
+  const pageOldest = useRef<(number | null)[]>([]);   // pageOldest[p] = oldest Shopify order on page p
 
   const searchTimer = useRef<ReturnType<typeof setTimeout>>(null);
   const { success, error } = useToast();
@@ -537,13 +715,20 @@ export default function OrdersPage() {
       .catch(() => {});
   }, []);
 
-  const totalPages = totalCount != null ? Math.max(1, Math.ceil(totalCount / pageSize)) : null;
+  // Pages follow Shopify (HANY rows slot in by date), except when only HANY is shown
+  const pagedCount = source === "hany" ? hanyCount : totalCount;
+  const totalPages = pagedCount != null ? Math.max(1, Math.ceil(pagedCount / pageSize)) : null;
+  const shownCount = source === "hany" ? hanyCount
+    : totalCount != null ? totalCount + (source === "all" ? hanyCount : 0) : null;
+
+  // Only Shopify orders take part in merging and the order-page arrows (HANY ones have their own page)
+  const shopifyOrders = useMemo(() => orders.filter((o) => !isHany(o)), [orders]);
 
   // Count only ids still on the page (merges/deletes can remove selected orders)
   const selectedCount = useMemo(() => orders.filter((o) => selectedIds.has(o.id)).length, [orders, selectedIds]);
 
   // Detect mergeable groups: same phone AND matching name, all open/pending
-  const mergeGroups = useMemo(() => findMergeGroups(orders), [orders]);
+  const mergeGroups = useMemo(() => findMergeGroups(shopifyOrders), [shopifyOrders]);
   const mergeGroupsKey = [...mergeGroups.values()].map(mergeGroupKey).sort().join("|");
 
   // Reflect a successful action in the local list (no refetch needed)
@@ -640,56 +825,109 @@ export default function OrdersPage() {
     } catch { setTotalCount(null); }
   }
 
-  async function loadOrders(tab: TabKey, q: string, tag: string, d: string, page = 1, size = pageSize) {
+  // All HANY orders for this tab / search / day. A Shopify tag filter means Shopify only.
+  async function loadHany(tab: TabKey, q: string, tag: string, d: string, src: SourceFilter) {
+    hanyAll.current = [];
+    setHanyCount(0);
+    if (src === "shopify" || tag) return;
+    try {
+      const range = dayRange(d);
+      const qs    = new URLSearchParams();
+      if (range.created_at_min) qs.set("since", range.created_at_min);
+      if (range.created_at_max) qs.set("until", range.created_at_max);
+      const res  = await fetch(`/api/hany/orders?${qs}`);
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error ?? "HANY");
+      const list = (data.orders as XenoOrder[]).filter((o) => hanyInTab(o, tab) && hanyMatches(o, q));
+      hanyAll.current = list.sort((a, b) => timeOf(b) - timeOf(a));
+      setHanyCount(list.length);
+    } catch (err) {
+      error("خطأ", `تعذر تحميل طلبات HANY — ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  async function loadOrders(tab: TabKey, q: string, tag: string, d: string, page = 1, size = pageSize, src = source) {
     setLoading(true);
     try {
-      const t      = TABS.find((t) => t.key === tab)!;
-      const cursor = cursors.current[page - 1] ?? null;
-      const params = new URLSearchParams({ ...t.shopifyParam, limit: String(size) });
-      if (cursor) {
-        params.set("page_info", cursor);
-      } else {
-        if (q) params.set("query", q);
-        if (tag && !t.shopifyParam.tag) params.set("tag", tag);
-        for (const [k, v] of Object.entries(dayRange(d))) params.set(k, v);
+      let shopifyList: XenoOrder[] = [];
+      let more   = false;
+      let oldest: number | null = null;
+
+      if (src !== "hany") {
+        try {
+          const t      = TABS.find((t) => t.key === tab)!;
+          const cursor = cursors.current[page - 1] ?? null;
+          const params = new URLSearchParams({ ...t.shopifyParam, limit: String(size) });
+          if (cursor) {
+            params.set("page_info", cursor);
+          } else {
+            if (q) params.set("query", q);
+            if (tag && !t.shopifyParam.tag) params.set("tag", tag);
+            for (const [k, v] of Object.entries(dayRange(d))) params.set(k, v);
+          }
+
+          const res  = await fetch(`/api/shopify/orders?${params}`);
+          const data = await res.json();
+          if (data.error) throw new Error(data.error);
+
+          // Shopify can't exclude these in the query, so drop them here:
+          // "جديدة" = not confirmed / waiting yet
+          const list = data.orders as XenoOrder[];
+          shopifyList = tab === "unfulfilled" ? list.filter((o) => reviewStatus(o.tags) === "new") : list;
+          more   = data.has_more ?? false;
+          oldest = list.length ? Math.min(...list.map(timeOf)) : null;
+
+          // Store cursor for the next page
+          if (data.next_page_info) {
+            cursors.current[page] = data.next_page_info;
+          }
+        } catch {
+          error("خطأ", "تعذر تحميل الطلبات من Shopify");
+          if (src === "shopify") return;   // keep the list as it was
+        }
       }
 
-      const res  = await fetch(`/api/shopify/orders?${params}`);
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      // HANY rows for this page: those created within this Shopify page's time span
+      let hanyRows: XenoOrder[] = [];
+      if (src === "hany") {
+        hanyRows = hanyAll.current.slice((page - 1) * size, page * size);
+        more     = page * size < hanyAll.current.length;
+      } else if (src === "all") {
+        const upper = page > 1 ? pageOldest.current[page - 1] ?? null : null;
+        const lower = more ? oldest : null;
+        hanyRows = hanyAll.current.filter((o) => {
+          const t = timeOf(o);
+          return (upper == null || t < upper) && (lower == null || t >= lower);
+        });
+        pageOldest.current[page] = oldest;
+      }
 
-      // Shopify can't exclude these in the query, so drop them here:
-      // "جديدة" = not confirmed / waiting yet
-      const list = data.orders as XenoOrder[];
-      setOrders(tab === "unfulfilled" ? list.filter((o) => reviewStatus(o.tags) === "new") : list);
+      setOrders(hanyRows.length ? [...shopifyList, ...hanyRows].sort((a, b) => timeOf(b) - timeOf(a)) : shopifyList);
       setSelectedIds(new Set()); // selection is per loaded page
-      setHasMore(data.has_more ?? false);
+      setHasMore(more);
       setCurrentPage(page);
-
-      // Store cursor for the next page
-      if (data.next_page_info) {
-        cursors.current[page] = data.next_page_info;
-      }
-    } catch {
-      error("خطأ", "تعذر تحميل الطلبات من Shopify");
     } finally {
       setLoading(false);
     }
   }
 
-  function resetAndLoad(tab: TabKey, q: string, tag: string, d: string, size = pageSize) {
+  async function resetAndLoad(tab: TabKey, q: string, tag: string, d: string, size = pageSize, src = source) {
     cursors.current = [null];
+    pageOldest.current = [];
     setCurrentPage(1);
-    loadOrders(tab, q, tag, d, 1, size);
-    fetchCount(tab, d);
+    setLoading(true);
+    if (src !== "hany") fetchCount(tab, d);
+    await loadHany(tab, q, tag, d, src);
+    loadOrders(tab, q, tag, d, 1, size, src);
   }
 
   useEffect(() => {
-    resetAndLoad(activeTab, search, tagFilter, day);
-  }, [activeTab, search, tagFilter, day]);
+    resetAndLoad(activeTab, search, tagFilter, day, pageSize, source);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, search, tagFilter, day, source]);
 
   // Lets an order page step to the order above / below it in this list
-  useEffect(() => { saveOrderNav(orders.map((o) => o.id)); }, [orders]);
+  useEffect(() => { saveOrderNav(shopifyOrders.map((o) => o.id)); }, [shopifyOrders]);
 
   // Auto-merge duplicate groups detected on the loaded page (the server also merges
   // duplicates on its own; this just shows the result right away)
@@ -765,7 +1003,7 @@ export default function OrdersPage() {
 
   function goToPage(page: number) {
     if (page < 1 || (totalPages && page > totalPages)) return;
-    if (page > 1 && !cursors.current[page - 1]) return; // cursor not yet known
+    if (page > 1 && source !== "hany" && !cursors.current[page - 1]) return; // cursor not yet known
     loadOrders(activeTab, search, tagFilter, day, page);
   }
 
@@ -778,7 +1016,9 @@ export default function OrdersPage() {
           <h1 className="text-page-title">الطلبات</h1>
           <p className="text-small mt-0.5">
             {loading ? "جارٍ التحميل..."
-              : totalCount != null ? `${totalCount.toLocaleString("en-US")} طلب على Shopify`
+              : source === "shopify" && totalCount != null ? `${totalCount.toLocaleString("en-US")} طلب على Shopify`
+              : source === "hany" ? `${hanyCount.toLocaleString("en-US")} طلب على HANY`
+              : shownCount != null ? `${shownCount.toLocaleString("en-US")} طلب (Shopify ${totalCount!.toLocaleString("en-US")} · HANY ${hanyCount.toLocaleString("en-US")})`
               : `${orders.length} طلب`}
           </p>
         </div>
@@ -816,6 +1056,17 @@ export default function OrdersPage() {
           }
         }}
       />
+
+      {/* Which website */}
+      <div className="flex items-center gap-1.5 overflow-x-auto">
+        <span className="text-xs font-semibold text-[var(--text-secondary)] ml-1 flex-shrink-0">الموقع:</span>
+        {SOURCES.map((s) => (
+          <button key={s.key} onClick={() => setSource(s.key)}
+            className={`px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors flex-shrink-0 ${source === s.key ? "bg-[var(--text-primary)] text-[var(--bg-card)]" : "bg-[var(--bg-base)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"}`}>
+            {s.label}
+          </button>
+        ))}
+      </div>
 
       {/* Filter Tabs */}
       <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
@@ -987,7 +1238,7 @@ export default function OrdersPage() {
         {loading ? (
           <div className="flex items-center justify-center gap-3 p-16">
             <Loader2 size={22} className="animate-spin text-[var(--primary)]" />
-            <p className="text-sm text-[var(--text-muted)]">جارٍ تحميل الطلبات من Shopify...</p>
+            <p className="text-sm text-[var(--text-muted)]">جارٍ تحميل الطلبات...</p>
           </div>
         ) : orders.length === 0 ? (
           <EmptyState title="لا توجد طلبات" description="لا توجد طلبات في هذه الفئة" />
@@ -1022,6 +1273,23 @@ export default function OrdersPage() {
                 </thead>
                 <tbody>
                   {orders.map((order) => {
+                    if (isHany(order)) {
+                      return (
+                        <HanyOrderRow key={order.id} order={order} confirm={confirm}
+                          selected={selectedIds.has(order.id)}
+                          onToggle={() => toggleSelect(order.id)}
+                          bulkBusy={bulkProgress !== null}
+                          onShip={() => setShipOrder(order)}
+                          onPrint={async () => {
+                            if (!(await confirm({ title: `طباعة بوليصة ${order.orderNumber}؟`, message: "البوليصة هتتطبع وهتتعلّم Printed على J&T.", confirmLabel: "طباعة" }))) return;
+                            printOrderLabel(order.shopifyId).catch((err) => error("فشل الطباعة", err instanceof Error ? err.message : String(err)));
+                          }}
+                          onUpdated={(o) => {
+                            setOrders((prev) => prev.map((x) => x.id === o.id ? o : x));
+                            hanyAll.current = hanyAll.current.map((x) => x.id === o.id ? o : x);
+                          }} />
+                      );
+                    }
                     const st = statusDisplay(order);
                     const pm = PAYMENT_DISPLAY[order.paymentStatus] ?? { label: order.paymentStatus, variant: "neutral" as const };
                     return (
@@ -1039,6 +1307,7 @@ export default function OrdersPage() {
                           <Link href={`/dashboard/orders/${order.id}`} className="font-mono text-[var(--primary)] font-bold text-xs hover:underline">
                             {order.orderNumber}
                           </Link>
+                          <div><SourceChip order={order} /></div>
                         </td>
                         <td>
                           <div>
@@ -1246,7 +1515,7 @@ export default function OrdersPage() {
                 </button>
                 {(() => {
                   const total    = totalPages ?? (currentPage + (hasMore ? 1 : 0));
-                  const maxKnown = cursors.current.length;
+                  const maxKnown = source === "hany" ? total : cursors.current.length;
                   const pages: (number | "…")[] = [];
                   for (let p = 1; p <= Math.min(total, maxKnown + 1); p++) {
                     if (p === 1 || p === total || Math.abs(p - currentPage) <= 2) {
@@ -1262,7 +1531,7 @@ export default function OrdersPage() {
                       <button
                         key={p}
                         onClick={() => goToPage(p as number)}
-                        disabled={loading || ((p as number) > 1 && !cursors.current[(p as number) - 1])}
+                        disabled={loading || ((p as number) > 1 && source !== "hany" && !cursors.current[(p as number) - 1])}
                         className={`min-w-[28px] h-7 rounded text-xs font-medium transition-colors ${
                           p === currentPage
                             ? "bg-[var(--primary)] text-white"

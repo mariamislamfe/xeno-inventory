@@ -3,6 +3,7 @@ import { logOrderAction } from "@/lib/audit";
 import { supabaseAdmin } from "@/lib/supabase/client";
 import { cancelJTOrder, getJTOrderIdByWaybill } from "@/lib/jt/client";
 import { setReviewStatus } from "@/lib/order-status-server";
+import { isHanyId } from "@/lib/hany/ids";
 
 // POST /api/shipments/cancel  { shopify_order_id, reason? }
 // Cancels the J&T shipment (printed or not), removes it here and sets the order to
@@ -38,9 +39,14 @@ export async function POST(req: NextRequest) {
   }
 
   await supabaseAdmin.from("shipments").delete().eq("id", ship.id);
-  const statusRes = await setReviewStatus(Number(shopify_order_id), "cancelled");
+  // HANY: cancelling an order there is final (and restocks it), so only the shipment is
+  // cancelled — the team decides about the order itself
+  const hanyOrder = isHanyId(shopify_order_id);
+  const statusRes = hanyOrder ? { ok: true as const, error: undefined } : await setReviewStatus(Number(shopify_order_id), "cancelled");
   await logOrderAction(shopify_order_id, "cancel_shipment",
-    `ألغى شحنة ${ship.order_number} على J&T (${ship.tracking_number}) وحوّل الطلب لـ «ملغي»`,
+    hanyOrder
+      ? `ألغى شحنة ${ship.order_number} (HANY) على J&T (${ship.tracking_number}) — الطلب نفسه ماتلغاش`
+      : `ألغى شحنة ${ship.order_number} على J&T (${ship.tracking_number}) وحوّل الطلب لـ «ملغي»`,
     { tracking_number: ship.tracking_number, txlogisticId });
   await supabaseAdmin.from("activity_log").insert({
     type:      "shipment",

@@ -17,6 +17,7 @@ import {
   ArrowLeftRight,
   ClipboardList,
   Printer,
+  Shirt,
 } from "lucide-react";
 
 interface NavItem {
@@ -50,6 +51,12 @@ const navGroups: NavGroup[] = [
       { href: "/dashboard/products",     label: "المنتجات",   icon: <Package size={17} /> },
       { href: "/dashboard/inventory",    label: "المخزون",    icon: <Archive size={17} /> },
       { href: "/dashboard/transactions", label: "المعاملات",  icon: <ArrowLeftRight size={17} /> },
+    ],
+  },
+  {
+    label: "HANY",
+    items: [
+      { href: "/dashboard/hany/products", label: "منتجات HANY", icon: <Shirt size={17} /> },
     ],
   },
   {

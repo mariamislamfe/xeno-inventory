@@ -4,6 +4,8 @@ import { supabaseAdmin } from "@/lib/supabase/client";
 import { createJTOrder } from "@/lib/jt/client";
 import { saveShipment } from "@/lib/shipments";
 import { currentQty, orderTotal } from "@/lib/shopify/orders";
+import { isHanyId } from "@/lib/hany/ids";
+import { shipHanyOrder } from "@/lib/hany/fulfilment";
 
 export async function POST(req: NextRequest) {
   const { orders } = await req.json();
@@ -13,6 +15,12 @@ export async function POST(req: NextRequest) {
   const results = [];
 
   for (const o of orders) {
+    // Orders from the HANY website: same J&T + WhatsApp flow, with HANY as the source
+    if (isHanyId(o.shopify_order_id)) {
+      results.push(await shipHanyOrder(o));
+      continue;
+    }
+
     // FIX-4: Check for existing shipment with a tracking number — prevents double-shipping
     const { data: existing } = await supabaseAdmin
       .from("shipments")

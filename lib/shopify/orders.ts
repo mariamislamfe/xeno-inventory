@@ -1,4 +1,5 @@
 import { shopifyFetch, shopifyPost } from "./client";
+import type { HanyOrderStatus, HanyPaymentStatus } from "@/lib/hany/types";
 
 // ── Shopify raw types ───────────────────────────────────────────────────
 export interface ShopifyAddress {
@@ -86,6 +87,8 @@ export interface XenoOrder {
   customerId?: number;
   customerOrdersCount?: number;                                         // all their orders, this one included
   lastAction?: { action: string; detail: string; user: string; at: string };  // latest team action (activity_log)
+  source?: "shopify" | "hany";                                          // which website; missing = Shopify
+  hany?: { status: HanyOrderStatus; paymentStatus: HanyPaymentStatus };  // only on HANY orders
 }
 
 // Reverse map: Shopify English province name → Arabic
