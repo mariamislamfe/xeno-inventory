@@ -6,9 +6,11 @@ import { hanyId } from "./ids";
 
 type Variant = "success" | "warning" | "danger" | "info" | "neutral" | "purple" | "orange" | "primary";
 
+// Same words and colours as a Shopify order (جديد / مكتمل / ملغي). بيتجهز / اتشحن / اتسلم
+// are the J&T shipping steps: they show in the order history, the badge says مكتمل (hanyBadge).
 export const HANY_STATUS: Record<HanyOrderStatus, { label: string; variant: Variant }> = {
   pending:    { label: "جديد",       variant: "warning" },
-  confirmed:  { label: "متأكد",      variant: "info"    },
+  confirmed:  { label: "مكتمل",      variant: "success" },
   processing: { label: "بيتجهز",     variant: "purple"  },
   shipped:    { label: "اتشحن",      variant: "orange"  },
   delivered:  { label: "اتسلم",      variant: "success" },
@@ -16,11 +18,22 @@ export const HANY_STATUS: Record<HanyOrderStatus, { label: string; variant: Vari
 };
 
 export const HANY_PAYMENT: Record<HanyPaymentStatus, { label: string; variant: Variant }> = {
-  pending:  { label: "لسه مندفعش", variant: "warning" },
+  pending:  { label: "غير مدفوع",  variant: "danger"  },
   paid:     { label: "مدفوع",      variant: "success" },
   failed:   { label: "فشل الدفع",  variant: "danger"  },
   refunded: { label: "مسترد",      variant: "neutral" },
 };
+
+/** The status badge of a HANY order: what a Shopify order in the same state shows. */
+export function hanyBadge(s: HanyOrderStatus) {
+  return HANY_STATUS[s === "processing" || s === "shipped" || s === "delivered" ? "confirmed" : s];
+}
+
+/** Status changes made by hand, the same ones as on Shopify (مكتمل / ملغي).
+ *  The shipping steps after that come from J&T (lib/hany/fulfilment). */
+export function hanyManualNext(s: HanyOrderStatus) {
+  return NEXT_STATUS[s].filter((to) => to === "confirmed" || to === "cancelled");
+}
 
 // Same rules HANY enforces (anything else returns 409)
 export const NEXT_STATUS: Record<HanyOrderStatus, HanyOrderStatus[]> = {

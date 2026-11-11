@@ -18,7 +18,7 @@ import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Modal } from "@/components/ui/Modal";
 import type { XenoOrder } from "@/lib/shopify/orders";
-import { HANY_STATUS, HANY_PAYMENT, NEXT_STATUS, SOURCE_DISPLAY, hanyOrderHref, hanyToXeno } from "@/lib/hany/labels";
+import { HANY_STATUS, SOURCE_DISPLAY, hanyBadge, hanyManualNext, hanyOrderHref, hanyToXeno } from "@/lib/hany/labels";
 import type { HanyOrder, HanyOrderStatus } from "@/lib/hany/types";
 
 // ── Product Picker ─────────────────────────────────────────────────────
@@ -531,9 +531,9 @@ function HanyOrderRow({ order, onUpdated, confirm, selected, onToggle, bulkBusy,
   const [busy, setBusy] = useState(false);
   const { success, error } = useToast();
   const status = order.hany!.status;
-  const st = HANY_STATUS[status];
-  const pm = HANY_PAYMENT[order.hany!.paymentStatus];
-  const next = NEXT_STATUS[status];
+  const st = hanyBadge(status);
+  const pm = PAYMENT_DISPLAY[order.paymentStatus] ?? { label: order.paymentStatus, variant: "neutral" as const };
+  const next = hanyManualNext(status);
 
   async function move(to: HanyOrderStatus) {
     setMenu(false);

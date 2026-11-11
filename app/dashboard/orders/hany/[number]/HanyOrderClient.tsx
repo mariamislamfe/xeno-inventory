@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { useConfirm } from "@/components/ui/ConfirmDialog";
-import { HANY_STATUS, HANY_PAYMENT, NEXT_STATUS, NEXT_PAYMENT, PAYMENT_METHOD, SOURCE_DISPLAY, hanyToXeno } from "@/lib/hany/labels";
+import { HANY_STATUS, HANY_PAYMENT, NEXT_STATUS, NEXT_PAYMENT, PAYMENT_METHOD, SOURCE_DISPLAY, hanyBadge, hanyManualNext, hanyToXeno } from "@/lib/hany/labels";
 import type { HanyOrder, HanyOrderStatus, HanyPaymentStatus } from "@/lib/hany/types";
 import { ShipModal } from "@/components/orders/ShipModal";
 import { printOrderLabel } from "@/lib/print-label";
@@ -108,7 +108,8 @@ export function HanyOrderClient({ orderNumber }: { orderNumber: string }) {
     );
   }
 
-  const st = HANY_STATUS[order.status];
+  const st = hanyBadge(order.status);
+  const manualNext = hanyManualNext(order.status);
   const pm = HANY_PAYMENT[order.payment_status];
   const area = order.shipping.area && order.shipping.area !== "All areas" ? order.shipping.area : null;
 
@@ -283,11 +284,13 @@ export function HanyOrderClient({ orderNumber }: { orderNumber: string }) {
 
           <div className="card p-4 space-y-2">
             <h2 className="text-section-title">حالة الطلب</h2>
-            {NEXT_STATUS[order.status].length === 0
-              ? <p className="text-xs text-[var(--text-muted)]">الحالة دي نهائية.</p>
+            {manualNext.length === 0
+              ? <p className="text-xs text-[var(--text-muted)]">
+                  {NEXT_STATUS[order.status].length === 0 ? "الحالة دي نهائية." : "الحالة بتتحدّث لوحدها مع الشحن على J&T."}
+                </p>
               : (
                 <div className="flex flex-wrap gap-2">
-                  {NEXT_STATUS[order.status].map((to) => (
+                  {manualNext.map((to) => (
                     <Button key={to} size="sm" variant={to === "cancelled" ? "danger" : "primary"}
                       loading={busy === `s:${to}`} disabled={busy !== null} onClick={() => moveStatus(to)}>
                       {to === "cancelled" ? "إلغاء الطلب" : `تحويل لـ «${HANY_STATUS[to].label}»`}
