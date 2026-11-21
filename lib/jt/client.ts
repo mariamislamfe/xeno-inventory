@@ -315,14 +315,18 @@ export interface JTScan { scanTime: string; scanType?: string; scanTypeName?: st
 /** Tracking history for up to 30 waybills per call → billCode → scans. */
 export async function traceJTBatch(billCodes: string[]): Promise<Map<string, JTScan[]>> {
   const out = new Map<string, JTScan[]>();
-  for (let i = 0; i < billCodes.length; i += 30) {
-    const chunk = billCodes.slice(i, i + 30);
-    try {
-      const data = await jtPost("/api/logistics/trace", { billCodes: chunk.join(",") });
-      for (const row of (Array.isArray(data?.data) ? data.data : []) as { billCode: string; details?: JTScan[] }[]) {
-        out.set(String(row.billCode), row.details ?? []);
-      }
-    } catch { /* leave this chunk unsynced */ }
+  const chunks: string[][] = [];
+  for (let i = 0; i < billCodes.length; i += 30) chunks.push(billCodes.slice(i, i + 30));
+  // A few calls at a time so hundreds of waybills fit in one request
+  for (let i = 0; i < chunks.length; i += 5) {
+    await Promise.all(chunks.slice(i, i + 5).map(async (chunk) => {
+      try {
+        const data = await jtPost("/api/logistics/trace", { billCodes: chunk.join(",") });
+        for (const row of (Array.isArray(data?.data) ? data.data : []) as { billCode: string; details?: JTScan[] }[]) {
+          out.set(String(row.billCode), row.details ?? []);
+        }
+      } catch { /* leave this chunk unsynced */ }
+    }));
   }
   return out;
 }

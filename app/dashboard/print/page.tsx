@@ -74,12 +74,18 @@ export default function PrintPage() {
     return data.shipments;
   }
 
-  // Pull fresh J&T statuses (picked up or not), then refresh the list quietly.
-  // Shipments checked in the last 10 minutes are skipped unless forced.
-  async function syncJT(t: Tab, force: boolean) {
+  // Pull fresh J&T statuses (picked up or not) for exactly the orders on this page,
+  // then refresh the list quietly
+  async function syncJT(t: Tab, list: PrintRow[]) {
+    const codes = list.filter((r) => r.tracking_number && !["delivered", "returned"].includes(r.status ?? "")).map((r) => r.tracking_number);
+    if (!codes.length) return;
     setSyncing(true);
     try {
-      const res  = await fetch(`/api/shipments/sync${force ? "?force=1" : ""}`, { method: "POST" });
+      const res  = await fetch("/api/shipments/sync", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ tracking_numbers: codes }),
+      });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.updated > 0) setRows(await fetchRows(t));
     } catch { /* keep the statuses we have */ } finally {
@@ -87,20 +93,20 @@ export default function PrintPage() {
     }
   }
 
-  function reload(t: Tab, force = false) {
+  function reload(t: Tab) {
     setLoading(true);
     setSelected(new Set());
     fetchRows(t)
-      .then(setRows)
+      .then((list) => { setRows(list); syncJT(t, list); })
       .catch((err) => { error("خطأ", String(err)); setRows([]); })
-      .finally(() => { setLoading(false); syncJT(t, force); });
+      .finally(() => setLoading(false));
   }
 
   useEffect(() => {
     fetchRows("pending")
-      .then(setRows)
+      .then((list) => { setRows(list); syncJT("pending", list); })
       .catch(() => setRows([]))
-      .finally(() => { setLoading(false); syncJT("pending", false); });
+      .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -242,7 +248,7 @@ export default function PrintPage() {
         </div>
         <Button variant="secondary" size="sm"
           icon={loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={14} />}
-          onClick={() => reload(tab, true)} disabled={loading || syncing}>
+          onClick={() => reload(tab)} disabled={loading || syncing}>
           تحديث
         </Button>
       </div>

@@ -65,22 +65,46 @@ export async function saveShipment(rec: ShipmentRecord): Promise<string | null> 
   return error ? error.message : null;
 }
 
+interface SyncRow {
+  id: string; shopify_order_id: number; order_number: string | null; tracking_number: string | null;
+  status: string; shipped_at: string | null; delivered_at: string | null;
+}
+const SYNC_COLS = "id, shopify_order_id, order_number, tracking_number, status, shipped_at, delivered_at";
+
 // Pull the latest status for shipments that aren't finished yet. Each shipment is
 // checked at most every `minAgeMs` (its updated_at marks the last check).
-export async function syncShipmentStatuses(opts: { minAgeMs?: number; limit?: number } = {}) {
+// With `trackingNumbers`, exactly those shipments are checked (e.g. the ones on the
+// print page) — the general queue is long and full of old never-picked-up shipments,
+// so today's orders could wait a long time there.
+export async function syncShipmentStatuses(opts: { minAgeMs?: number; limit?: number; trackingNumbers?: string[] } = {}) {
   const minAge = opts.minAgeMs ?? 10 * 60 * 1000;
-  const { data: rows, error } = await supabaseAdmin
-    .from("shipments")
-    .select("id, shopify_order_id, order_number, tracking_number, status, shipped_at, delivered_at")
-    .not("tracking_number", "is", null)
-    .not("status", "in", "(delivered,returned)")
-    .lt("updated_at", new Date(Date.now() - minAge).toISOString())
-    .order("updated_at", { ascending: true })
-    .limit(opts.limit ?? 300);
-  if (error) return { checked: 0, updated: 0, error: error.message };
-  if (!rows?.length) return { checked: 0, updated: 0 };
+  let rows: SyncRow[] = [];
+  if (opts.trackingNumbers) {
+    const codes = [...new Set(opts.trackingNumbers.filter(Boolean))].slice(0, 600);
+    for (let i = 0; i < codes.length; i += 150) {
+      const { data, error } = await supabaseAdmin
+        .from("shipments").select(SYNC_COLS)
+        .in("tracking_number", codes.slice(i, i + 150))
+        .not("status", "in", "(delivered,returned)");
+      if (error) return { checked: 0, updated: 0, error: error.message };
+      rows.push(...((data ?? []) as SyncRow[]));
+    }
+  } else {
+    const { data, error } = await supabaseAdmin
+      .from("shipments").select(SYNC_COLS)
+      .not("tracking_number", "is", null)
+      .not("status", "in", "(delivered,returned)")
+      .lt("updated_at", new Date(Date.now() - minAge).toISOString())
+      .order("updated_at", { ascending: true })
+      .limit(opts.limit ?? 300);
+    if (error) return { checked: 0, updated: 0, error: error.message };
+    rows = (data ?? []) as SyncRow[];
+  }
+  if (!rows.length) return { checked: 0, updated: 0 };
+  const targeted = !!opts.trackingNumbers;
 
   const scans = await traceJTBatch(rows.map((r) => r.tracking_number as string));
+  const writes: PromiseLike<unknown>[] = [];
   let updated = 0;
   const hanyChanges: { shopify_order_id: number; order_number: string | null; status: string }[] = [];
   const now = new Date().toISOString();
@@ -98,8 +122,12 @@ export async function syncShipmentStatuses(opts: { minAgeMs?: number; limit?: nu
       updated++;
       if (isHanyId(r.shopify_order_id)) hanyChanges.push({ shopify_order_id: Number(r.shopify_order_id), order_number: r.order_number, status });
     }
-    await supabaseAdmin.from("shipments").update(patch).eq("id", r.id);
+    // Targeted checks only write what changed (keeps it fast for hundreds of rows)
+    if (targeted && status === r.status && !patch.shipped_at && !patch.delivered_at) continue;
+    writes.push(supabaseAdmin.from("shipments").update(patch).eq("id", r.id).then(() => null));
+    if (writes.length >= 20) { await Promise.all(writes); writes.length = 0; }
   }
+  await Promise.all(writes);
   // HANY orders: tell the HANY store too (اتشحن / اتسلم), so its customer sees it
   if (hanyChanges.length) await (await import("@/lib/hany/fulfilment")).pushHanyShipmentStatus(hanyChanges);
   return { checked: rows.length, updated };
