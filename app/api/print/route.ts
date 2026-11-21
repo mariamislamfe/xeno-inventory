@@ -52,7 +52,7 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await supabaseAdmin
     .from("shipments")
-    .select("id, shopify_order_id, order_number, tracking_number, customer_name, phone, city, governorate, cod_amount, created_at, shipped_at")
+    .select("id, shopify_order_id, order_number, tracking_number, customer_name, phone, city, governorate, cod_amount, status, created_at, shipped_at")
     .not("tracking_number", "is", null)
     .eq("label_printed", printed)
     .order("created_at", { ascending: false })

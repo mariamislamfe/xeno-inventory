@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Printer, Loader2, RefreshCw, Search, CheckCircle2, CalendarDays, Package, X, XCircle } from "lucide-react";
+import { Printer, Loader2, RefreshCw, Search, CheckCircle2, CalendarDays, Package, X, XCircle, Truck, Warehouse } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useToast } from "@/components/ui/Toast";
@@ -20,7 +20,9 @@ interface PrintRow {
   phone:            string | null;
   city:             string | null;
   governorate:      string | null;
+  status:           string | null;   // J&T status from the tracking sync ("pending" = not picked up yet)
   created_at:       string;
+  shipped_at:       string | null;   // first J&T scan (pickup)
   items:            { sku: string; name: string; variant: string; qty: number }[];
 }
 
@@ -38,6 +40,13 @@ function dayLabel(day: string) {
 const skuKey = (s: string) => s.trim().toUpperCase();
 
 type Tab = "pending" | "printed";
+// Has J&T picked it up from the warehouse? Any scan at all (pickup or later) = it left
+type Stage = "" | "picked" | "warehouse";
+const isPicked = (r: PrintRow) => !!r.status && r.status !== "pending";
+const JT_STATUS: Record<string, string> = {
+  picked_up: "Picked up", in_transit: "في الطريق", out_for_delivery: "مع المندوب",
+  delivered: "اتسلم", returned: "مرتجع", failed: "مشكلة",
+};
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("ar-EG", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -53,6 +62,8 @@ export default function PrintPage() {
   const [bulk,       setBulk]       = useState<{ done: number; total: number } | null>(null);
   const [day,        setDay]        = useState("");   // "" = all days
   const [sku,        setSku]        = useState("");   // "" = all products
+  const [stage,      setStage]      = useState<Stage>("");
+  const [syncing,    setSyncing]    = useState(false);
   const [confirm, confirmDialog] = useConfirm();
   const { success, error } = useToast();
 
@@ -63,20 +74,34 @@ export default function PrintPage() {
     return data.shipments;
   }
 
-  function reload(t: Tab) {
+  // Pull fresh J&T statuses (picked up or not), then refresh the list quietly.
+  // Shipments checked in the last 10 minutes are skipped unless forced.
+  async function syncJT(t: Tab, force: boolean) {
+    setSyncing(true);
+    try {
+      const res  = await fetch(`/api/shipments/sync${force ? "?force=1" : ""}`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.updated > 0) setRows(await fetchRows(t));
+    } catch { /* keep the statuses we have */ } finally {
+      setSyncing(false);
+    }
+  }
+
+  function reload(t: Tab, force = false) {
     setLoading(true);
     setSelected(new Set());
     fetchRows(t)
       .then(setRows)
       .catch((err) => { error("خطأ", String(err)); setRows([]); })
-      .finally(() => setLoading(false));
+      .finally(() => { setLoading(false); syncJT(t, force); });
   }
 
   useEffect(() => {
     fetchRows("pending")
       .then(setRows)
       .catch(() => setRows([]))
-      .finally(() => setLoading(false));
+      .finally(() => { setLoading(false); syncJT("pending", false); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Days that have shipments, newest first, with counts (quick-pick chips)
@@ -106,7 +131,8 @@ export default function PrintPage() {
     return r.items.some((i) => skuExact ? skuKey(i.sku) === skuQuery : skuKey(i.sku).includes(skuQuery));
   }
 
-  const filtered = useMemo(() => {
+  // Rows matching the other filters (the J&T picked-up counts are taken from these)
+  const baseFiltered = useMemo(() => {
     const q = search.trim();
     return rows.filter((r) =>
       (!day || localDay(r.created_at) === day) &&
@@ -114,6 +140,10 @@ export default function PrintPage() {
       (!q || [r.order_number, r.tracking_number, r.customer_name, r.phone].some((v) => v?.includes(q))));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, search, day, skuQuery, skuExact]);
+  const pickedCount = baseFiltered.filter(isPicked).length;
+  const filtered = useMemo(() =>
+    baseFiltered.filter((r) => !stage || (stage === "picked") === isPicked(r)),
+  [baseFiltered, stage]);
 
   // Pieces of the chosen SKU across the filtered orders
   const skuPieces = skuQuery
@@ -212,7 +242,7 @@ export default function PrintPage() {
         </div>
         <Button variant="secondary" size="sm"
           icon={loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={14} />}
-          onClick={() => reload(tab)} disabled={loading}>
+          onClick={() => reload(tab, true)} disabled={loading || syncing}>
           تحديث
         </Button>
       </div>
@@ -246,6 +276,28 @@ export default function PrintPage() {
 
       {/* Day + product filters — "طباعة الكل" prints exactly what's shown */}
       <div className="card p-3 space-y-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Truck size={15} className="text-[var(--text-muted)]" />
+          <span className="text-xs font-semibold text-[var(--text-secondary)]">J&T:</span>
+          {([
+            ["",          `الكل (${baseFiltered.length})`],
+            ["picked",    `J&T استلمتها — Picked up (${pickedCount})`],
+            ["warehouse", `لسه في المخزن (${baseFiltered.length - pickedCount})`],
+          ] as const).map(([key, label]) => (
+            <button key={key} onClick={() => setStage(key)}
+              className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-colors ${
+                stage === key
+                  ? key === "picked" ? "bg-[var(--success)] text-white" : key === "warehouse" ? "bg-[var(--warning)] text-white" : "bg-[var(--primary)] text-white"
+                  : "bg-[var(--bg-base)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"}`}>
+              {label}
+            </button>
+          ))}
+          {syncing && (
+            <span className="flex items-center gap-1 text-[11px] text-[var(--text-muted)]">
+              <Loader2 size={12} className="animate-spin" /> بنحدّث الحالة من J&T...
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-2 flex-wrap">
           <CalendarDays size={15} className="text-[var(--text-muted)]" />
           <span className="text-xs font-semibold text-[var(--text-secondary)]">اليوم:</span>
@@ -294,7 +346,7 @@ export default function PrintPage() {
         ) : filtered.length === 0 ? (
           <EmptyState
             icon={tab === "pending" ? <CheckCircle2 size={28} /> : <Printer size={28} />}
-            title={rows.length && (day || sku) ? "مفيش طلبات بالفلتر ده" : tab === "pending" ? "مفيش بوالص مستنية طباعة" : "لا توجد بوالص مطبوعة"}
+            title={rows.length && (day || sku || stage) ? "مفيش طلبات بالفلتر ده" : tab === "pending" ? "مفيش بوالص مستنية طباعة" : "لا توجد بوالص مطبوعة"}
             description={tab === "pending" ? "أي طلب يتشحن على J&T هيظهر هنا لحد ما تطبعي البوليصة" : ""}
           />
         ) : (
@@ -312,6 +364,7 @@ export default function PrintPage() {
                   <th>الهاتف</th>
                   <th>المنتجات</th>
                   <th>رقم التتبع</th>
+                  <th>حالة J&T</th>
                   <th>تاريخ الشحن</th>
                   <th className="text-center">البوليصة</th>
                 </tr>
@@ -345,6 +398,20 @@ export default function PrintPage() {
                       ) : <span className="text-[11px] text-[var(--text-muted)]">—</span>}
                     </td>
                     <td><span className="font-mono text-xs font-semibold">{r.tracking_number}</span></td>
+                    <td>
+                      {isPicked(r) ? (
+                        <span className="inline-flex flex-col items-start gap-0.5">
+                          <span className="inline-flex items-center gap-1 rounded-full bg-[var(--success-light)] text-[var(--success)] px-2 py-0.5 text-[11px] font-bold whitespace-nowrap">
+                            <Truck size={12} /> {JT_STATUS[r.status ?? ""] ?? "Picked up"}
+                          </span>
+                          {r.shipped_at && <span className="text-[10px] text-[var(--text-muted)] whitespace-nowrap">{formatDate(r.shipped_at)}</span>}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-[var(--warning-light)] text-[var(--warning)] px-2 py-0.5 text-[11px] font-bold whitespace-nowrap">
+                          <Warehouse size={12} /> لسه في المخزن
+                        </span>
+                      )}
+                    </td>
                     <td><span className="text-[11px] text-[var(--text-muted)] whitespace-nowrap">{formatDate(r.created_at)}</span></td>
                     <td className="text-center">
                       <div className="flex items-center justify-center gap-1.5">
